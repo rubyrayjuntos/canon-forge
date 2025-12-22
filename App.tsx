@@ -272,7 +272,19 @@ const App: React.FC = () => {
   if (!hasApiKey) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-center">
-        <button onClick={async () => { if (window.aistudio) { await window.aistudio.openSelectKey(); setHasApiKey(true); } }} className="bg-indigo-600 p-6 rounded-2xl text-white font-bold shadow-xl shadow-indigo-500/20">Select API Key to Begin</button>
+        <button 
+          onClick={async () => { 
+            if (window.aistudio) { 
+              await window.aistudio.openSelectKey();
+              // Re-check if key is actually selected
+              const keySelected = await window.aistudio.hasSelectedApiKey();
+              setHasApiKey(keySelected);
+            }
+          }} 
+          className="bg-indigo-600 p-6 rounded-2xl text-white font-bold shadow-xl shadow-indigo-500/20"
+        >
+          Select API Key to Begin
+        </button>
       </div>
     );
   }

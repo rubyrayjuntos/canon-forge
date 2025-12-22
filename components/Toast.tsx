@@ -16,11 +16,9 @@ const Toast: React.FC<ToastProps> = ({ message, type, onClose }) => {
   const icon = type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle';
 
   React.useEffect(() => {
-    const timer = setTimeout(() => {
-      onClose();
-    }, 3000);
+    const timer = setTimeout(onClose, 3000);
     return () => clearTimeout(timer);
-  }, []); // onClose is intentionally excluded to prevent timer reset
+  }, [onClose]);
 
   return (
     <div className={`fixed bottom-4 right-4 ${bgColor} text-white px-6 py-4 rounded-lg shadow-lg flex items-center gap-3 animate-in slide-in-from-bottom-2 z-50`}>
