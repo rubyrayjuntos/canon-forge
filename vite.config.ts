@@ -7,7 +7,8 @@ export default defineConfig(({ mode }) => {
     return {
       server: {
         port: 3000,
-        host: 'localhost',
+        // Allow override via environment variable for flexibility (e.g., Docker, cloud environments)
+        host: env.VITE_HOST || 'localhost',
       },
       plugins: [react()],
       define: {
