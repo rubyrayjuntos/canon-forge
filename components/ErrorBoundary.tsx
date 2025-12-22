@@ -23,6 +23,7 @@ class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
+    // Log error details for debugging (in production, send to error tracking service)
     console.error('Error Boundary caught an error:', error, errorInfo);
   }
 
@@ -50,7 +51,8 @@ class ErrorBoundary extends Component<Props, State> {
                   Error Details
                 </summary>
                 <pre className="mt-2 text-xs text-red-400 bg-black/40 p-4 rounded overflow-auto max-h-40">
-                  {this.state.error.toString()}
+                  {/* Only show error message in production, not full stack trace */}
+                  {this.state.error.message || this.state.error.toString()}
                 </pre>
               </details>
             )}

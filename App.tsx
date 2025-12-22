@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   CharacterProfile, SetProfile, ReferenceImage, ReferenceType, 
   SetReferenceType, GenerationState, AppTab, CompositeConfig 
@@ -8,8 +8,9 @@ import { INITIAL_CHARACTER_PROFILE, INITIAL_SET_PROFILE } from './constants';
 import { generateCharacterImage, generateSetImage, generateCompositeImage } from './services/geminiService';
 import CharacterForm from './components/CharacterForm';
 import Toast, { ToastType } from './components/Toast';
-import { downloadImage, copyToClipboard } from './utils/helpers';
+import { downloadImage } from './utils/helpers';
 import { loadSavedCharacters, loadSavedSets, saveCharacters, saveSets } from './utils/storage';
+import { useClipboard } from './hooks/useClipboard';
 
 // --- Helper Functions ---
 const generateId = (): string => Math.random().toString(36).substring(2, 15);
@@ -25,16 +26,7 @@ interface ToastState {
 
 const CompositeResultCard = ({ img, charName, setName }: { img: ReferenceImage, charName: string, setName: string }) => {
   const [promptOpen, setPromptOpen] = useState(false);
-  const [toastState, setToastState] = useState<ToastState>({ message: '', type: 'success', visible: false });
-
-  const handleCopyToClipboard = async (text: string) => {
-    try {
-      await copyToClipboard(text);
-      setToastState({ message: 'Prompt copied to clipboard', type: 'success', visible: true });
-    } catch (error) {
-      setToastState({ message: 'Failed to copy prompt', type: 'error', visible: true });
-    }
-  };
+  const { handleCopyToClipboard, toastState, hideToast } = useClipboard();
 
   return (
     <div className="relative group rounded-2xl overflow-hidden border border-slate-800 bg-slate-900 shadow-2xl flex flex-col">
@@ -42,7 +34,7 @@ const CompositeResultCard = ({ img, charName, setName }: { img: ReferenceImage, 
         <Toast
           message={toastState.message}
           type={toastState.type}
-          onClose={() => setToastState({ ...toastState, visible: false })}
+          onClose={hideToast}
         />
       )}
       <img src={img.url} className="w-full aspect-video object-cover transition-transform group-hover:scale-[1.01] duration-700" />
@@ -98,16 +90,7 @@ interface ReferenceGalleryProps {
 
 const ReferenceGallery: React.FC<ReferenceGalleryProps> = ({ images, onGenerate, isGenerating, types }) => {
   const [expandedPrompt, setExpandedPrompt] = useState<string | null>(null);
-  const [toastState, setToastState] = useState<ToastState>({ message: '', type: 'success', visible: false });
-
-  const handleCopyToClipboard = async (text: string) => {
-    try {
-      await copyToClipboard(text);
-      setToastState({ message: 'Prompt copied to clipboard', type: 'success', visible: true });
-    } catch (error) {
-      setToastState({ message: 'Failed to copy prompt', type: 'error', visible: true });
-    }
-  };
+  const { handleCopyToClipboard, toastState, hideToast } = useClipboard();
 
   return (
     <div className="space-y-8">
@@ -115,7 +98,7 @@ const ReferenceGallery: React.FC<ReferenceGalleryProps> = ({ images, onGenerate,
         <Toast
           message={toastState.message}
           type={toastState.type}
-          onClose={() => setToastState({ ...toastState, visible: false })}
+          onClose={hideToast}
         />
       )}
       <div className="flex flex-wrap gap-2">
@@ -186,6 +169,10 @@ const App: React.FC = () => {
 
   const [genState, setGenState] = useState<GenerationState>({ isGenerating: false, statusMessage: '' });
   const [toastState, setToastState] = useState<ToastState>({ message: '', type: 'success', visible: false });
+
+  const hideToast = useCallback(() => {
+    setToastState((prev) => ({ ...prev, visible: false }));
+  }, []);
 
   useEffect(() => {
     const checkKey = async () => { if (window.aistudio) setHasApiKey(await window.aistudio.hasSelectedApiKey()); };
@@ -296,7 +283,7 @@ const App: React.FC = () => {
         <Toast
           message={toastState.message}
           type={toastState.type}
-          onClose={() => setToastState({ ...toastState, visible: false })}
+          onClose={hideToast}
         />
       )}
       <header className="bg-slate-950/80 backdrop-blur border-b border-slate-800 p-4 sticky top-0 z-50">

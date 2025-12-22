@@ -9,8 +9,8 @@ interface Window {
   aistudio?: AIStudio;
 }
 
-declare const process: {
-  env: {
+declare namespace NodeJS {
+  interface ProcessEnv {
     GEMINI_API_KEY?: string;
-  };
-};
+  }
+}

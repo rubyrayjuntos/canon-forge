@@ -14,7 +14,11 @@ export function downloadImage(url: string, filename: string): void {
  * Copies text to clipboard
  * @param text - The text to copy
  * @returns Promise that resolves when copy is successful
+ * @throws Error if clipboard API is unavailable or permission is denied
  */
 export async function copyToClipboard(text: string): Promise<void> {
+  if (!navigator.clipboard) {
+    throw new Error('Clipboard API not available');
+  }
   await navigator.clipboard.writeText(text);
 }
