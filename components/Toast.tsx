@@ -1,6 +1,5 @@
 import React from 'react';
-
-export type ToastType = 'success' | 'error' | 'info';
+import { ToastType } from '../types';
 
 interface ToastProps {
   message: string;

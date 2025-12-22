@@ -2,12 +2,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
   CharacterProfile, SetProfile, ReferenceImage, ReferenceType, 
-  SetReferenceType, GenerationState, AppTab, CompositeConfig 
+  SetReferenceType, GenerationState, AppTab, CompositeConfig, ToastType
 } from './types';
 import { INITIAL_CHARACTER_PROFILE, INITIAL_SET_PROFILE } from './constants';
 import { generateCharacterImage, generateSetImage, generateCompositeImage } from './services/geminiService';
 import CharacterForm from './components/CharacterForm';
-import Toast, { ToastType } from './components/Toast';
+import Toast from './components/Toast';
 import { downloadImage } from './utils/helpers';
 import { loadSavedCharacters, loadSavedSets, saveCharacters, saveSets } from './utils/storage';
 import { useClipboard } from './hooks/useClipboard';
@@ -274,11 +274,20 @@ const App: React.FC = () => {
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-center">
         <button 
           onClick={async () => { 
-            if (window.aistudio) { 
-              await window.aistudio.openSelectKey();
-              // Re-check if key is actually selected
-              const keySelected = await window.aistudio.hasSelectedApiKey();
-              setHasApiKey(keySelected);
+            try {
+              if (window.aistudio) { 
+                await window.aistudio.openSelectKey();
+                // Re-check if key is actually selected
+                const keySelected = await window.aistudio.hasSelectedApiKey();
+                setHasApiKey(keySelected);
+              }
+            } catch (error) {
+              console.error('Failed to select API key:', error);
+              setToastState({ 
+                message: 'Failed to select API key. Please try again.', 
+                type: 'error', 
+                visible: true 
+              });
             }
           }} 
           className="bg-indigo-600 p-6 rounded-2xl text-white font-bold shadow-xl shadow-indigo-500/20"
