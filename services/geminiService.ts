@@ -11,7 +11,7 @@ interface GenerationResult {
 }
 
 async function callGemini(prompt: string, seed: number, aspectRatio: "1:1" | "3:4" | "4:3" | "9:16" | "16:9" = "16:9"): Promise<GenerationResult> {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
   const modelName = 'gemini-3-pro-image-preview';
 
   const safeSeed = Math.abs(Math.floor(seed)) % (MAX_INT32 + 1);

@@ -2,6 +2,7 @@
 export type ReferenceType = 'HEADSHOT' | 'BODY_REVERSE' | 'WARDROBE' | 'ACTION' | 'EXPRESSION' | 'NEUTRAL_SHEET';
 export type SetReferenceType = 'WIDE' | 'MEDIUM' | 'POV' | 'DETAIL' | 'PLAN' | 'LIGHTING';
 export type AppTab = 'CharacterForge' | 'SetForge' | 'CompositorForge';
+export type ToastType = 'success' | 'error' | 'info';
 
 export interface CharacterProfile {
   id: string;

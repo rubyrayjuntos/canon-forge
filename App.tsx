@@ -1,29 +1,42 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   CharacterProfile, SetProfile, ReferenceImage, ReferenceType, 
-  SetReferenceType, GenerationState, AppTab, CompositeConfig 
+  SetReferenceType, GenerationState, AppTab, CompositeConfig, ToastType
 } from './types';
 import { INITIAL_CHARACTER_PROFILE, INITIAL_SET_PROFILE } from './constants';
 import { generateCharacterImage, generateSetImage, generateCompositeImage } from './services/geminiService';
 import CharacterForm from './components/CharacterForm';
+import Toast from './components/Toast';
+import { downloadImage } from './utils/helpers';
+import { loadSavedCharacters, loadSavedSets, saveCharacters, saveSets } from './utils/storage';
+import { useClipboard } from './hooks/useClipboard';
 
 // --- Helper Functions ---
-const generateId = () => Math.random().toString(36).substring(2, 15);
-const generateSeed = () => Math.floor(Math.random() * 2147483647);
+const generateId = (): string => Math.random().toString(36).substring(2, 15);
+const generateSeed = (): number => Math.floor(Math.random() * 2147483647);
+
+interface ToastState {
+  message: string;
+  type: ToastType;
+  visible: boolean;
+}
 
 // --- Sub-Components ---
 
 const CompositeResultCard = ({ img, charName, setName }: { img: ReferenceImage, charName: string, setName: string }) => {
   const [promptOpen, setPromptOpen] = useState(false);
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    alert("Prompt copied to clipboard.");
-  };
+  const { handleCopyToClipboard, toastState, hideToast } = useClipboard();
 
   return (
     <div className="relative group rounded-2xl overflow-hidden border border-slate-800 bg-slate-900 shadow-2xl flex flex-col">
+      {toastState.visible && (
+        <Toast
+          message={toastState.message}
+          type={toastState.type}
+          onClose={hideToast}
+        />
+      )}
       <img src={img.url} className="w-full aspect-video object-cover transition-transform group-hover:scale-[1.01] duration-700" />
       
       <div className="p-6 bg-slate-950/90 border-t border-slate-800">
@@ -41,7 +54,7 @@ const CompositeResultCard = ({ img, charName, setName }: { img: ReferenceImage, 
              >
                <i className="fas fa-terminal"></i>
              </button>
-             <button onClick={() => { const l=document.createElement('a'); l.href=img.url; l.download='comp.png'; l.click(); }} className="p-3 bg-indigo-600 rounded-full hover:bg-indigo-500 shadow-lg text-white">
+             <button onClick={() => downloadImage(img.url, 'comp.png')} className="p-3 bg-indigo-600 rounded-full hover:bg-indigo-500 shadow-lg text-white" title="Download Image">
                <i className="fas fa-download"></i>
              </button>
            </div>
@@ -52,7 +65,7 @@ const CompositeResultCard = ({ img, charName, setName }: { img: ReferenceImage, 
               <div className="flex justify-between items-center mb-2">
                 <span className="text-indigo-500 font-bold uppercase tracking-widest">Composite Logic Prompt</span>
                 <button 
-                  onClick={() => copyToClipboard(img.promptUsed)}
+                  onClick={() => handleCopyToClipboard(img.promptUsed)}
                   className="text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
                 >
                   <i className="fas fa-copy"></i> Copy
@@ -68,18 +81,28 @@ const CompositeResultCard = ({ img, charName, setName }: { img: ReferenceImage, 
   );
 };
 
-const ReferenceGallery = ({ images, onGenerate, isGenerating, types }: any) => {
-  const [expandedPrompt, setExpandedPrompt] = useState<string | null>(null);
+interface ReferenceGalleryProps {
+  images: ReferenceImage[];
+  onGenerate: (type: string) => void;
+  isGenerating: boolean;
+  types: Array<{ type: string; label: string; icon: string }>;
+}
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    alert("Prompt copied to clipboard.");
-  };
+const ReferenceGallery: React.FC<ReferenceGalleryProps> = ({ images, onGenerate, isGenerating, types }) => {
+  const [expandedPrompt, setExpandedPrompt] = useState<string | null>(null);
+  const { handleCopyToClipboard, toastState, hideToast } = useClipboard();
 
   return (
     <div className="space-y-8">
+      {toastState.visible && (
+        <Toast
+          message={toastState.message}
+          type={toastState.type}
+          onClose={hideToast}
+        />
+      )}
       <div className="flex flex-wrap gap-2">
-        {types.map((t: any) => (
+        {types.map((t) => (
           <button
             key={t.type}
             onClick={() => onGenerate(t.type)}
@@ -107,14 +130,14 @@ const ReferenceGallery = ({ images, onGenerate, isGenerating, types }: any) => {
                 >
                   <i className="fas fa-terminal"></i>
                 </button>
-                <button onClick={() => { const l=document.createElement('a'); l.href=img.url; l.download='canon.png'; l.click(); }} className="text-slate-500 hover:text-white"><i className="fas fa-download"></i></button>
+                <button onClick={() => downloadImage(img.url, 'canon.png')} className="text-slate-500 hover:text-white" title="Download Image"><i className="fas fa-download"></i></button>
               </div>
             </div>
             {expandedPrompt === img.id && (
               <div className="p-3 bg-black/50 border-t border-slate-800 text-[10px] font-mono text-slate-400 overflow-hidden">
                 <div className="flex justify-between mb-1">
                    <span className="text-indigo-500 font-bold">PROMPT:</span>
-                   <button onClick={() => copyToClipboard(img.promptUsed)} className="text-indigo-400 hover:text-white"><i className="fas fa-copy"></i> Copy</button>
+                   <button onClick={() => handleCopyToClipboard(img.promptUsed)} className="text-indigo-400 hover:text-white"><i className="fas fa-copy"></i> Copy</button>
                 </div>
                 <div className="line-clamp-4 hover:line-clamp-none transition-all cursor-pointer whitespace-pre-wrap">
                   {img.promptUsed}
@@ -145,25 +168,39 @@ const App: React.FC = () => {
   const [savedSets, setSavedSets] = useState<SetProfile[]>([]);
 
   const [genState, setGenState] = useState<GenerationState>({ isGenerating: false, statusMessage: '' });
+  const [toastState, setToastState] = useState<ToastState>({ message: '', type: 'success', visible: false });
+
+  const hideToast = useCallback(() => {
+    setToastState((prev) => ({ ...prev, visible: false }));
+  }, []);
 
   useEffect(() => {
     const checkKey = async () => { if (window.aistudio) setHasApiKey(await window.aistudio.hasSelectedApiKey()); };
     checkKey();
-    setSavedChars(JSON.parse(localStorage.getItem('saved_chars') || '[]'));
-    setSavedSets(JSON.parse(localStorage.getItem('saved_sets') || '[]'));
+    setSavedChars(loadSavedCharacters());
+    setSavedSets(loadSavedSets());
   }, []);
 
   const save = (type: 'char' | 'set') => {
     if (type === 'char') {
       const updated = [...savedChars.filter(c => c.id !== charProfile.id), charProfile];
-      localStorage.setItem('saved_chars', JSON.stringify(updated));
-      setSavedChars(updated);
+      const success = saveCharacters(updated);
+      if (success) {
+        setSavedChars(updated);
+        setToastState({ message: 'Character profile saved successfully', type: 'success', visible: true });
+      } else {
+        setToastState({ message: 'Failed to save character profile', type: 'error', visible: true });
+      }
     } else {
       const updated = [...savedSets.filter(s => s.id !== setProfile.id), setProfile];
-      localStorage.setItem('saved_sets', JSON.stringify(updated));
-      setSavedSets(updated);
+      const success = saveSets(updated);
+      if (success) {
+        setSavedSets(updated);
+        setToastState({ message: 'Set profile saved successfully', type: 'success', visible: true });
+      } else {
+        setToastState({ message: 'Failed to save set profile', type: 'error', visible: true });
+      }
     }
-    alert("Profile Stored in Vault.");
   };
 
   const handleGen = async (type: string, forgeType: AppTab) => {
@@ -194,7 +231,7 @@ const App: React.FC = () => {
   };
 
   const randomizeSet = () => {
-    const pick = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)];
+    const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
     const types = {
       Indoor: ['Neon Cyber-Cafe', 'Subterranean Shrine', 'Luxury Sky-Loft', 'Derelict Laboratory', 'Alien Spaceship Bridge', 'High-Tech Monastery'],
       Outdoor: ['Floating Rain-District', 'Abandoned Sprawl-Park', 'Ritual Rooftop', 'Monolithic Overpass', 'Magma-Side Industrial Outpost']
@@ -224,7 +261,7 @@ const App: React.FC = () => {
     ];
     const actors = ["A hovering security drone", "Two hooded acolytes in the background", "A translucent holographic guide", "None"];
     
-    const pick = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)];
+    const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
     setCompConfig({
       ...compConfig,
       action: pick(actions),
@@ -235,13 +272,41 @@ const App: React.FC = () => {
   if (!hasApiKey) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-center">
-        <button onClick={async () => { await window.aistudio.openSelectKey(); setHasApiKey(true); }} className="bg-indigo-600 p-6 rounded-2xl text-white font-bold shadow-xl shadow-indigo-500/20">Select API Key to Begin</button>
+        <button 
+          onClick={async () => { 
+            try {
+              if (window.aistudio) { 
+                await window.aistudio.openSelectKey();
+                // Re-check if key is actually selected
+                const keySelected = await window.aistudio.hasSelectedApiKey();
+                setHasApiKey(keySelected);
+              }
+            } catch (error) {
+              console.error('Failed to select API key:', error);
+              setToastState({ 
+                message: 'Failed to select API key. Please try again.', 
+                type: 'error', 
+                visible: true 
+              });
+            }
+          }} 
+          className="bg-indigo-600 p-6 rounded-2xl text-white font-bold shadow-xl shadow-indigo-500/20"
+        >
+          Select API Key to Begin
+        </button>
       </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+      {toastState.visible && (
+        <Toast
+          message={toastState.message}
+          type={toastState.type}
+          onClose={hideToast}
+        />
+      )}
       <header className="bg-slate-950/80 backdrop-blur border-b border-slate-800 p-4 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-3">
@@ -281,7 +346,7 @@ const App: React.FC = () => {
                 profile={charProfile} 
                 setProfile={setCharProfile} 
                 onRandomize={() => {
-                  const pick = (arr: any) => arr[Math.floor(Math.random()*arr.length)];
+                  const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random()*arr.length)];
                   setCharProfile({
                     ...charProfile,
                     seed: generateSeed(),
