@@ -23,7 +23,7 @@ export function useClipboard() {
     try {
       await copyToClipboard(text);
       setToastState({ message: 'Copied to clipboard', type: 'success', visible: true });
-    } catch (error) {
+    } catch {
       setToastState({ message: 'Failed to copy to clipboard', type: 'error', visible: true });
     }
   }, []);
