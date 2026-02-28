@@ -1,4 +1,3 @@
-
 export type ReferenceType = 'HEADSHOT' | 'BODY_REVERSE' | 'WARDROBE' | 'ACTION' | 'EXPRESSION' | 'NEUTRAL_SHEET';
 export type SetReferenceType = 'WIDE' | 'MEDIUM' | 'POV' | 'DETAIL' | 'PLAN' | 'LIGHTING';
 export type AppTab = 'CharacterForge' | 'SetForge' | 'CompositorForge';
@@ -31,8 +30,6 @@ export interface SetProfile {
 }
 
 export interface CompositeConfig {
-  characterId: string;
-  setId: string;
   action: string;
   extraActors: string;
   compositionStyle: string;
@@ -50,4 +47,14 @@ export interface GenerationState {
   isGenerating: boolean;
   statusMessage: string;
   error?: string;
+}
+
+// Augment the global Window interface to type the AI Studio API surface.
+declare global {
+  interface Window {
+    aistudio?: {
+      hasSelectedApiKey: () => Promise<boolean>;
+      openSelectKey: () => Promise<void>;
+    };
+  }
 }
