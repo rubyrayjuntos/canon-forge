@@ -13,6 +13,12 @@ Cinematography: 35mm prime equivalent, shallow depth of field with bokeh, slight
 Mood: Serenity mixed with anticipation, cinematic lighting (5200K).
 `;
 
+export const AESTHETIC_PROMPT_CORE_FAST = `
+Primary aesthetic: Urban spiritual realism. 
+Lighting: Clean studio lighting with minimal shadow complexity.
+Cinematography: 35mm prime equivalent, balanced exposure, light film grain.
+`;
+
 export const CHARACTER_TEMPLATES: Record<ReferenceType, string> = TEST_MODE
   ? {
       HEADSHOT: 'Close-up headshot, neutral background.',
@@ -63,6 +69,9 @@ export const INITIAL_CHARACTER_PROFILE = {
   personality: '',
   backstory: '',
   aesthetic: 'Urban Spiritual Realism',
+  undergarmentType: 'Minimal briefs',
+  undergarmentFit: 'Standard',
+  undergarmentStyle: 'Matte black',
 };
 
 export const INITIAL_SET_PROFILE = {

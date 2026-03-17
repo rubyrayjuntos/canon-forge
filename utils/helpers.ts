@@ -4,16 +4,35 @@
  * @param filename - The name to save the file as
  */
 export function downloadImage(url: string, filename: string): void {
-  // Only allow data URLs or same-origin URLs for security
-  if (!url.startsWith('data:') && !url.startsWith(window.location.origin)) {
-    console.error('Download blocked: URL must be a data URL or same-origin URL');
+  const isDataUrl = url.startsWith('data:');
+  const isSameOrigin = url.startsWith(window.location.origin);
+
+  const triggerDownload = (href: string) => {
+    const link = document.createElement('a');
+    link.href = href;
+    link.download = filename;
+    link.click();
+  };
+
+  if (isDataUrl || isSameOrigin) {
+    triggerDownload(url);
     return;
   }
-  
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  link.click();
+
+  // Attempt cross-origin download by fetching a blob
+  fetch(url)
+    .then((res) => {
+      if (!res.ok) throw new Error(`Failed to fetch image: ${res.status}`);
+      return res.blob();
+    })
+    .then((blob) => {
+      const objectUrl = URL.createObjectURL(blob);
+      triggerDownload(objectUrl);
+      URL.revokeObjectURL(objectUrl);
+    })
+    .catch((err) => {
+      console.error('Download blocked: unable to fetch cross-origin image', err);
+    });
 }
 
 /**

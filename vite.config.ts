@@ -9,11 +9,14 @@ export default defineConfig(({ mode }) => {
         port: 3000,
         // Allow override via environment variable for flexibility (e.g., Docker, cloud environments)
         host: env.VITE_HOST || 'localhost',
+        proxy: {
+          '/api': {
+            target: 'http://localhost:3001',
+            changeOrigin: true,
+          },
+        },
       },
       plugins: [react()],
-      define: {
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
-      },
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),

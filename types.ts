@@ -18,6 +18,9 @@ export interface CharacterProfile {
   personality: string;
   backstory: string;
   aesthetic: string;
+  undergarmentType: string;
+  undergarmentFit: string;
+  undergarmentStyle: string;
 }
 
 export interface SetProfile {

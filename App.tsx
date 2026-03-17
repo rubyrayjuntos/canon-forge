@@ -12,9 +12,14 @@ import {
 } from './types';
 import { INITIAL_CHARACTER_PROFILE, INITIAL_SET_PROFILE } from './constants';
 import {
-  generateCharacterImage,
-  generateSetImage,
-  generateCompositeImage,
+  generateCharacterImage as generateGeminiCharacterImage,
+  generateSetImage as generateGeminiSetImage,
+  generateCompositeImage as generateGeminiCompositeImage,
+} from './services/geminiService';
+import {
+  generateCharacterImage as generateFastCharacterImage,
+  generateSetImage as generateFastSetImage,
+  generateCompositeImage as generateFastCompositeImage,
 } from './services/pollinationsService';
 import CharacterForm from './components/CharacterForm';
 import Toast from './components/Toast';
@@ -270,6 +275,7 @@ const App: React.FC = () => {
     isGenerating: false,
     statusMessage: '',
   });
+  const [fastRender, setFastRender] = useState<boolean>(false);
   const [toastState, setToastState] = useState<ToastState>({
     message: '',
     type: 'success',
@@ -327,11 +333,19 @@ const App: React.FC = () => {
     setGenState({ isGenerating: true, statusMessage: `Forging ${type}...` });
     try {
       let result;
-      if (forgeType === 'CharacterForge')
-        result = await generateCharacterImage(charProfile, type as ReferenceType);
-      else if (forgeType === 'SetForge')
-        result = await generateSetImage(setProfile, type as SetReferenceType);
-      else result = await generateCompositeImage(charProfile, setProfile, compConfig);
+      if (forgeType === 'CharacterForge') {
+        result = fastRender
+          ? await generateFastCharacterImage(charProfile, type as ReferenceType)
+          : await generateGeminiCharacterImage(charProfile, type as ReferenceType, fastRender);
+      } else if (forgeType === 'SetForge') {
+        result = fastRender
+          ? await generateFastSetImage(setProfile, type as SetReferenceType)
+          : await generateGeminiSetImage(setProfile, type as SetReferenceType, fastRender);
+      } else {
+        result = fastRender
+          ? await generateFastCompositeImage(charProfile, setProfile, compConfig)
+          : await generateGeminiCompositeImage(charProfile, setProfile, compConfig, fastRender);
+      }
 
       const ref: ReferenceImage = {
         id: generateId(),
@@ -454,6 +468,15 @@ const App: React.FC = () => {
           </nav>
 
           <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-slate-400">
+              <input
+                type="checkbox"
+                checked={fastRender}
+                onChange={(e) => setFastRender(e.target.checked)}
+                className="accent-indigo-500"
+              />
+              Fast Render
+            </label>
             <button
               onClick={() => save(activeTab === 'SetForge' ? 'set' : 'char')}
               className="text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-700 transition-colors"
@@ -481,6 +504,19 @@ const App: React.FC = () => {
                 setProfile={setCharProfile}
                 onRandomize={() => {
                   const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
+                  const undergarmentType = pick([
+                    'Minimal briefs',
+                    'Boxer briefs',
+                    'Compression shorts',
+                    'Sports bra + briefs',
+                    'None',
+                  ]);
+                  const undergarmentFit =
+                    undergarmentType === 'None' ? '' : pick(['Standard', 'Tight', 'High-waist', 'Low-rise']);
+                  const undergarmentStyle =
+                    undergarmentType === 'None'
+                      ? ''
+                      : pick(['Matte black', 'Charcoal grey', 'Skin-tone', 'Neutral']);
                   setCharProfile({
                     ...charProfile,
                     seed: generateSeed(),
@@ -518,6 +554,9 @@ const App: React.FC = () => {
                       'Clockwork left hand',
                     ]),
                     personality: 'Stoic wanderer with a sense of purpose.',
+                    undergarmentType,
+                    undergarmentFit,
+                    undergarmentStyle,
                   });
                   setCharRefs([]);
                 }}
@@ -789,7 +828,7 @@ const App: React.FC = () => {
       <footer className="bg-slate-950 border-t border-slate-900 p-4 text-[9px] text-slate-600 uppercase tracking-widest flex justify-between">
         <div className="flex gap-4">
           <span className="flex items-center gap-2">
-            <span className="w-1 h-1 bg-green-500 rounded-full"></span> Pollinations Engine
+            <span className="w-1 h-1 bg-green-500 rounded-full"></span> Gemini Engine
           </span>
           <span>Tab: {activeTab}</span>
         </div>
