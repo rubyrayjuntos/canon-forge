@@ -28,7 +28,7 @@ const VENICE_ASPECT_RATIO_MAP = {
   '16:9': { width: 1280, height: 720  },
 };
 
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '20mb' }));
 
 const GEMINI_IMAGE_MODELS = [
   'gemini-3-pro-image-preview',
@@ -69,7 +69,7 @@ app.get('/api/models', async (req, res) => {
 });
 
 app.post('/api/generate', async (req, res) => {
-  const { prompt, seed, aspectRatio, fastRender, provider = 'gemini', model } = req.body ?? {};
+  const { prompt, seed, aspectRatio, fastRender, provider = 'gemini', model, referenceImage } = req.body ?? {};
   if (!prompt || typeof prompt !== 'string') {
     return res.status(400).json({ error: 'INVALID_PROMPT' });
   }
@@ -131,11 +131,17 @@ app.post('/api/generate', async (req, res) => {
     const activeModel = model || MODEL_NAME;
     const imageSize = fastRender ? '512' : '1K';
     const ai = new GoogleGenAI({ apiKey });
+    const parts = [];
+    if (referenceImage) {
+      const match = referenceImage.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) parts.push({ inlineData: { mimeType: match[1], data: match[2] } });
+    }
+    parts.push({ text: prompt });
     const generate = (size) =>
       Promise.race([
         ai.models.generateContent({
           model: activeModel,
-          contents: [{ parts: [{ text: prompt }] }],
+          contents: [{ parts }],
           config: { seed: safeSeed, imageConfig: { aspectRatio: ratio, imageSize: size } },
         }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), REQUEST_TIMEOUT_MS)),
