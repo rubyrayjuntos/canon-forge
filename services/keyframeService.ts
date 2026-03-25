@@ -58,36 +58,35 @@ export async function generateKeyframeSequence(
   for (let batch = 0; batch < indices.length; batch += CONCURRENCY) {
     const batchIndices = indices.slice(batch, batch + CONCURRENCY);
     await Promise.all(
-      batchIndices.map((i) => {
+      batchIndices.map(async (i) => {
         const timestampSeconds = i * interval;
         const beat = scene.manualBeats[i] ?? '';
         const prompt = buildKeyframePrompt(char, set, scene.sceneAction, i, frameCount, timestampSeconds, beat);
 
         onFrameUpdate(i, { status: 'generating', promptUsed: prompt });
 
-        return fetch('/api/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            prompt,
-            seed: char.seed,
-            aspectRatio: '16:9',
-            fastRender: true,
-            provider: providerConfig.provider,
-            model: providerConfig.model,
-          }),
-        })
-          .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
-          .then(({ ok, data }) => {
-            if (!ok || !data.url) {
-              onFrameUpdate(i, { status: 'error' });
-            } else {
-              onFrameUpdate(i, { status: 'done', url: data.url });
-            }
-          })
-          .catch(() => {
-            onFrameUpdate(i, { status: 'error' });
+        try {
+          const res = await fetch('/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              prompt,
+              seed: char.seed,
+              aspectRatio: '16:9',
+              fastRender: true,
+              provider: providerConfig.provider,
+              model: providerConfig.model,
+            }),
           });
+          const data = await res.json();
+          if (!res.ok || !data.url) {
+            onFrameUpdate(i, { status: 'error' });
+          } else {
+            onFrameUpdate(i, { status: 'done', url: data.url });
+          }
+        } catch {
+          onFrameUpdate(i, { status: 'error' });
+        }
       })
     );
   }
