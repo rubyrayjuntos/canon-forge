@@ -38,7 +38,8 @@ export function buildKeyframePrompt(
 
 export function computeFrameCount(totalDuration: number, intervalSeconds: number): number {
   const interval = Math.max(1, Math.min(8, intervalSeconds));
-  return Math.floor(totalDuration / interval) + 1;
+  const duration = Math.max(0, totalDuration);
+  return Math.floor(duration / interval) + 1;
 }
 
 export async function generateKeyframeSequence(
@@ -51,37 +52,43 @@ export async function generateKeyframeSequence(
   const interval = Math.max(1, Math.min(8, scene.intervalSeconds)); // guard
   const frameCount = computeFrameCount(scene.totalDuration, interval);
 
-  const framePromises = Array.from({ length: frameCount }, (_, i) => {
-    const timestampSeconds = i * interval;
-    const beat = scene.manualBeats[i] ?? '';
-    const prompt = buildKeyframePrompt(char, set, scene.sceneAction, i, frameCount, timestampSeconds, beat);
+  const CONCURRENCY = 4;
+  const indices = Array.from({ length: frameCount }, (_, i) => i);
 
-    onFrameUpdate(i, { status: 'generating', promptUsed: prompt });
+  for (let batch = 0; batch < indices.length; batch += CONCURRENCY) {
+    const batchIndices = indices.slice(batch, batch + CONCURRENCY);
+    await Promise.all(
+      batchIndices.map((i) => {
+        const timestampSeconds = i * interval;
+        const beat = scene.manualBeats[i] ?? '';
+        const prompt = buildKeyframePrompt(char, set, scene.sceneAction, i, frameCount, timestampSeconds, beat);
 
-    return fetch('/api/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        prompt,
-        seed: char.seed,
-        aspectRatio: '16:9',
-        fastRender: true,
-        provider: providerConfig.provider,
-        model: providerConfig.model,
-      }),
-    })
-      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
-      .then(({ ok, data }) => {
-        if (!ok || !data.url) {
-          onFrameUpdate(i, { status: 'error' });
-        } else {
-          onFrameUpdate(i, { status: 'done', url: data.url });
-        }
+        onFrameUpdate(i, { status: 'generating', promptUsed: prompt });
+
+        return fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt,
+            seed: char.seed,
+            aspectRatio: '16:9',
+            fastRender: true,
+            provider: providerConfig.provider,
+            model: providerConfig.model,
+          }),
+        })
+          .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+          .then(({ ok, data }) => {
+            if (!ok || !data.url) {
+              onFrameUpdate(i, { status: 'error' });
+            } else {
+              onFrameUpdate(i, { status: 'done', url: data.url });
+            }
+          })
+          .catch(() => {
+            onFrameUpdate(i, { status: 'error' });
+          });
       })
-      .catch(() => {
-        onFrameUpdate(i, { status: 'error' });
-      });
-  });
-
-  await Promise.all(framePromises);
+    );
+  }
 }
