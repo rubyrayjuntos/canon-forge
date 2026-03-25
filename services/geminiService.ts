@@ -17,6 +17,17 @@ function buildUndergarmentLine(profile: CharacterProfile): string {
   return `Undergarments: ${parts.join(', ')}.`;
 }
 
+export interface ProviderConfig {
+  provider: 'gemini' | 'venice';
+  model: string;
+}
+
+let activeProviderConfig: ProviderConfig = { provider: 'gemini', model: 'gemini-3-pro-image-preview' };
+
+export function setProviderConfig(config: ProviderConfig) {
+  activeProviderConfig = config;
+}
+
 async function callGemini(
   prompt: string,
   seed: number,
@@ -27,7 +38,11 @@ async function callGemini(
     const response = await fetch('/api/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, seed, aspectRatio, fastRender }),
+      body: JSON.stringify({
+        prompt, seed, aspectRatio, fastRender,
+        provider: activeProviderConfig.provider,
+        model: activeProviderConfig.model,
+      }),
     });
     const data = await response.json();
     if (!response.ok) {
@@ -40,6 +55,8 @@ async function callGemini(
       throw new Error('Generation timed out. Please try again.');
     if (error.message === 'MODEL_UNAVAILABLE')
       throw new Error('Model is busy right now. Please try again in a moment.');
+    if (error.message === 'RATE_LIMITED')
+      throw new Error('Rate limit reached. Please wait a minute and try again.');
     if (error.message === 'SAFETY_BLOCK')
       throw new Error('Blocked by safety filters. Try a different prompt.');
     if (error.message === 'NO_RESULT' || error.message === 'NO_IMAGE_DATA')
@@ -54,13 +71,15 @@ export async function generateCharacterImage(
   fastRender: boolean
 ): Promise<GenerationResult> {
   const core = fastRender ? AESTHETIC_PROMPT_CORE_FAST : AESTHETIC_PROMPT_CORE;
-  const undergarmentLine = type === 'BODY_REVERSE' ? buildUndergarmentLine(profile) : '';
+  const undergarmentLine = (type === 'BODY_REVERSE' || type === 'BODY_NUDE')
+    ? (type === 'BODY_NUDE' ? 'Undergarments: None (non-sexual, clinical life drawing reference).' : buildUndergarmentLine(profile))
+    : '';
   const prompt = `${core}
     Subject: Character ${profile.name}, ${profile.age}y/o ${profile.gender}, ${profile.build} build, ${profile.skinTone} skin, ${profile.eyes} eyes, ${profile.hair} hair. ${profile.distinctiveFeatures}.
     Scene: ${CHARACTER_TEMPLATES[type]}
     ${undergarmentLine}
     Style: High-fidelity cinematic photography. Strict facial and anatomical consistency.`.trim();
-  return callGemini(prompt, profile.seed, type === 'BODY_REVERSE' ? "3:4" : "16:9", fastRender);
+  return callGemini(prompt, profile.seed, (type === 'BODY_REVERSE' || type === 'BODY_NUDE') ? "3:4" : "16:9", fastRender);
 }
 
 export async function generateSetImage(
