@@ -26,6 +26,7 @@ import {
   generateCompositeImage as generateFastCompositeImage,
 } from './services/pollinationsService';
 import CharacterForm from './components/CharacterForm';
+import SceneForgePanel from './components/SceneForgePanel';
 import Toast from './components/Toast';
 import { downloadImage } from './utils/helpers';
 import { loadSavedCharacters, loadSavedSets, saveCharacters, saveSets } from './utils/storage';
@@ -527,7 +528,7 @@ const App: React.FC = () => {
           </div>
 
           <nav className="flex bg-slate-900 rounded-xl p-1">
-            {(['CharacterForge', 'SetForge', 'CompositorForge'] as AppTab[]).map((t) => (
+            {(['CharacterForge', 'SetForge', 'CompositorForge', 'SceneForge'] as AppTab[]).map((t) => (
               <button
                 key={t}
                 onClick={() => setActiveTab(t)}
@@ -929,6 +930,18 @@ const App: React.FC = () => {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {activeTab === 'SceneForge' && (
+          <div className="animate-in fade-in duration-500">
+            <SceneForgePanel
+              charProfile={charProfile}
+              savedChars={savedChars}
+              setProfile={setProfile}
+              savedSets={savedSets}
+              providerConfig={providerConfig}
+            />
           </div>
         )}
       </main>

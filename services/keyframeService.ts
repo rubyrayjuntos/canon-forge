@@ -52,42 +52,37 @@ export async function generateKeyframeSequence(
   const interval = Math.max(1, Math.min(8, scene.intervalSeconds)); // guard
   const frameCount = computeFrameCount(scene.totalDuration, interval);
 
-  const CONCURRENCY = 4;
   const indices = Array.from({ length: frameCount }, (_, i) => i);
+  await Promise.all(
+    indices.map(async (i) => {
+      const timestampSeconds = i * interval;
+      const beat = scene.manualBeats[i] ?? '';
+      const prompt = buildKeyframePrompt(char, set, scene.sceneAction, i, frameCount, timestampSeconds, beat);
 
-  for (let batch = 0; batch < indices.length; batch += CONCURRENCY) {
-    const batchIndices = indices.slice(batch, batch + CONCURRENCY);
-    await Promise.all(
-      batchIndices.map(async (i) => {
-        const timestampSeconds = i * interval;
-        const beat = scene.manualBeats[i] ?? '';
-        const prompt = buildKeyframePrompt(char, set, scene.sceneAction, i, frameCount, timestampSeconds, beat);
+      onFrameUpdate(i, { status: 'generating', promptUsed: prompt });
 
-        onFrameUpdate(i, { status: 'generating', promptUsed: prompt });
-
-        try {
-          const res = await fetch('/api/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              prompt,
-              seed: char.seed,
-              aspectRatio: '16:9',
-              fastRender: true,
-              provider: providerConfig.provider,
-              model: providerConfig.model,
-            }),
-          });
-          const data = await res.json();
-          if (!res.ok || !data.url) {
-            onFrameUpdate(i, { status: 'error' });
-          } else {
-            onFrameUpdate(i, { status: 'done', url: data.url });
-          }
-        } catch {
+      try {
+        const res = await fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt,
+            seed: char.seed,
+            aspectRatio: '16:9',
+            fastRender: true,
+            provider: providerConfig.provider,
+            model: providerConfig.model,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.url) {
           onFrameUpdate(i, { status: 'error' });
+        } else {
+          onFrameUpdate(i, { status: 'done', url: data.url });
         }
-      })
-    );
-  }
+      } catch {
+        onFrameUpdate(i, { status: 'error' });
+      }
+    })
+  );
 }
