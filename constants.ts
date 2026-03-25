@@ -23,6 +23,7 @@ export const CHARACTER_TEMPLATES: Record<ReferenceType, string> = TEST_MODE
   ? {
       HEADSHOT: 'Close-up headshot, neutral background.',
       BODY_REVERSE: 'Full body front view, simple background.',
+      BODY_NUDE: 'Full body figure reference, front and 3/4 view, standing naturally, studio lighting.',
       WARDROBE: 'Full body with clothing, urban setting.',
       ACTION: 'Action pose, dynamic.',
       EXPRESSION: 'Face showing emotion.',
@@ -31,6 +32,8 @@ export const CHARACTER_TEMPLATES: Record<ReferenceType, string> = TEST_MODE
   : {
       HEADSHOT:
         'Extreme close-up cinematic headshot, neutral expression, microscopic skin texture and iris detail, neutral studio background, soft key lighting, character focus.',
+      BODY_NUDE:
+        'Full body figure reference. Front view and 3/4 profile view side-by-side. The character is standing naturally, unclothed, in a neutral studio. Accurate human proportions, musculature, and skin detail. Studio lighting — soft key light, fill shadow, specular highlights on skin. Clean background. Character design reference sheet.',
       BODY_REVERSE:
         'Full body anatomical character reference sheet showing 3 distinct poses side-by-side: Front view, 3/4 profile view, and strict Profile view. The character is wearing character-appropriate minimal athletic briefs to clearly define musculature, skeletal structure, and defining physical traits. Clinical but cinematic lighting, clean simple studio background, high-detail skin rendering.',
       WARDROBE:

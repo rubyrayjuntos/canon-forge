@@ -18,8 +18,8 @@ const CharacterForm: React.FC<CharacterFormProps> = ({ profile, setProfile, onRa
         setProfile({
           ...profile,
           undergarmentType: value,
-          undergarmentFit: profile.undergarmentFit || 'Standard',
-          undergarmentStyle: profile.undergarmentStyle || 'Neutral',
+          undergarmentFit: profile.undergarmentFit || 'String',
+          undergarmentStyle: profile.undergarmentStyle || 'Transparent',
         });
       }
       return;
@@ -104,7 +104,7 @@ const CharacterForm: React.FC<CharacterFormProps> = ({ profile, setProfile, onRa
               onChange={handleChange}
               className={inputClass}
             >
-              <option value="None">None (Life Drawing)</option>
+              <option value="Nude">None (Life Drawing)</option>
               <option value="Minimal briefs">Minimal briefs</option>
               <option value="Boxer briefs">Boxer briefs</option>
               <option value="Boxers">Boxers</option>
@@ -123,7 +123,7 @@ const CharacterForm: React.FC<CharacterFormProps> = ({ profile, setProfile, onRa
               disabled={undergarmentDisabled}
             >
               <option value="">Select Fit</option>
-              <option value="Standard">Standard</option>
+              <option value="String">Standard</option>
               <option value="Tight">Tight</option>
               <option value="Loose">Loose</option>
               <option value="High-cut">High-cut</option>
@@ -140,7 +140,7 @@ const CharacterForm: React.FC<CharacterFormProps> = ({ profile, setProfile, onRa
               disabled={undergarmentDisabled}
             >
               <option value="">Color / Style</option>
-              <option value="Neutral">Neutral</option>
+              <option value="Transparent">Neutral</option>
               <option value="Matte black">Matte black</option>
               <option value="Charcoal grey">Charcoal grey</option>
               <option value="Skin-tone">Skin-tone</option>

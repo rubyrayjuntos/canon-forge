@@ -9,13 +9,17 @@ import {
   AppTab,
   CompositeConfig,
   ToastType,
+  VideoClip,
 } from './types';
 import { INITIAL_CHARACTER_PROFILE, INITIAL_SET_PROFILE } from './constants';
 import {
   generateCharacterImage as generateGeminiCharacterImage,
   generateSetImage as generateGeminiSetImage,
   generateCompositeImage as generateGeminiCompositeImage,
+  setProviderConfig,
+  ProviderConfig,
 } from './services/geminiService';
+import { generateCompositeVideo } from './services/videoService';
 import {
   generateCharacterImage as generateFastCharacterImage,
   generateSetImage as generateFastSetImage,
@@ -125,6 +129,7 @@ const ReferenceGallery: React.FC<ReferenceGalleryProps> = ({
   types,
 }) => {
   const [expandedPrompt, setExpandedPrompt] = useState<string | null>(null);
+  const [lightboxImage, setLightboxImage] = useState<ReferenceImage | null>(null);
   const [loadingImages, setLoadingImages] = useState<Set<string>>(new Set());
   const { handleCopyToClipboard, toastState, hideToast } = useClipboard();
 
@@ -196,7 +201,8 @@ const ReferenceGallery: React.FC<ReferenceGalleryProps> = ({
             )}
             <img
               src={img.url}
-              className="aspect-video w-full object-cover transition-transform group-hover:scale-105"
+              className="aspect-video w-full object-cover transition-transform group-hover:scale-105 cursor-zoom-in"
+              onClick={() => setLightboxImage(img)}
               onLoad={() => handleImageLoad(img.id)}
               onError={() => handleImageError(img.id)}
             />
@@ -238,6 +244,38 @@ const ReferenceGallery: React.FC<ReferenceGalleryProps> = ({
           </div>
         ))}
       </div>
+
+      {lightboxImage && (
+        <div
+          className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
+          onClick={() => setLightboxImage(null)}
+        >
+          <div className="relative max-w-7xl max-h-full" onClick={e => e.stopPropagation()}>
+            <img
+              src={lightboxImage.url}
+              className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl"
+            />
+            <div className="absolute top-3 right-3 flex gap-2">
+              <button
+                onClick={() => downloadImage(lightboxImage.url, `canon_${lightboxImage.type}.png`)}
+                className="p-2 bg-black/60 hover:bg-black/80 text-white rounded-lg transition-colors"
+                title="Download"
+              >
+                <i className="fas fa-download text-sm"></i>
+              </button>
+              <button
+                onClick={() => setLightboxImage(null)}
+                className="p-2 bg-black/60 hover:bg-black/80 text-white rounded-lg transition-colors"
+              >
+                <i className="fas fa-xmark text-sm"></i>
+              </button>
+            </div>
+            <div className="absolute bottom-3 left-3 text-[10px] uppercase tracking-widest text-indigo-400 font-bold bg-black/60 px-2 py-1 rounded">
+              {lightboxImage.type.replace(/_/g, ' ')}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -267,9 +305,23 @@ const App: React.FC = () => {
   const [charRefs, setCharRefs] = useState<ReferenceImage[]>([]);
   const [setRefs, setSetRefs] = useState<ReferenceImage[]>([]);
   const [compRefs, setCompRefs] = useState<ReferenceImage[]>([]);
+  const [videoClips, setVideoClips] = useState<VideoClip[]>([]);
 
   const [savedChars, setSavedChars] = useState<CharacterProfile[]>([]);
   const [savedSets, setSavedSets] = useState<SetProfile[]>([]);
+
+  const [providerConfig, setProviderConfigState] = useState<ProviderConfig>({ provider: 'gemini', model: 'gemini-3-pro-image-preview' });
+  const [availableModels, setAvailableModels] = useState<{ gemini: {id:string;name:string}[]; venice: {id:string;name:string}[] }>({ gemini: [], venice: [] });
+
+  useEffect(() => {
+    fetch('/api/models').then(r => r.json()).then(data => {
+      setAvailableModels(data);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    setProviderConfig(providerConfig);
+  }, [providerConfig]);
 
   const [genState, setGenState] = useState<GenerationState>({
     isGenerating: false,
@@ -366,6 +418,25 @@ const App: React.FC = () => {
         statusMessage: '',
         error: e.message || 'An unknown error occurred',
       });
+    }
+  };
+
+  const handleGenVideo = async () => {
+    setGenState({ isGenerating: true, statusMessage: 'Forging video clip... (1–3 min)' });
+    try {
+      const result = await generateCompositeVideo(charProfile, setProfile, compConfig);
+      const clip: VideoClip = {
+        id: generateId(),
+        url: result.url,
+        promptUsed: result.prompt,
+        characterName: charProfile.name,
+        setName: setProfile.name,
+        timestamp: Date.now(),
+      };
+      setVideoClips(prev => [clip, ...prev]);
+      setGenState({ isGenerating: false, statusMessage: '' });
+    } catch (e: any) {
+      setGenState({ isGenerating: false, statusMessage: '', error: e.message || 'Video generation failed.' });
     }
   };
 
@@ -467,7 +538,33 @@ const App: React.FC = () => {
             ))}
           </nav>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            <div className="flex items-center gap-1 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1">
+              <select
+                value={providerConfig.provider}
+                onChange={e => {
+                  const p = e.target.value as 'gemini' | 'venice';
+                  const defaultModel = p === 'gemini'
+                    ? (availableModels.gemini[0]?.id || 'gemini-3-pro-image-preview')
+                    : (availableModels.venice[0]?.id || 'flux-dev-uncensored');
+                  setProviderConfigState({ provider: p, model: defaultModel });
+                }}
+                className="bg-transparent text-[10px] uppercase tracking-widest text-indigo-400 font-bold focus:outline-none cursor-pointer"
+              >
+                <option value="gemini">Gemini</option>
+                <option value="venice">Venice</option>
+              </select>
+              <span className="text-slate-600">|</span>
+              <select
+                value={providerConfig.model}
+                onChange={e => setProviderConfigState({ ...providerConfig, model: e.target.value })}
+                className="bg-transparent text-[10px] text-slate-300 focus:outline-none cursor-pointer max-w-[140px]"
+              >
+                {(providerConfig.provider === 'gemini' ? availableModels.gemini : availableModels.venice).map(m => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </select>
+            </div>
             <label className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-slate-400">
               <input
                 type="checkbox"
@@ -571,6 +668,7 @@ const App: React.FC = () => {
                 types={[
                   { type: 'HEADSHOT', label: 'Headshot', icon: 'fa-user-circle' },
                   { type: 'BODY_REVERSE', label: 'Anatomical (3 Poses)', icon: 'fa-street-view' },
+                  { type: 'BODY_NUDE', label: 'Figure Study', icon: 'fa-person' },
                   { type: 'NEUTRAL_SHEET', label: 'Neutral Studio', icon: 'fa-table-cells' },
                   { type: 'WARDROBE', label: 'Wardrobe', icon: 'fa-shirt' },
                   { type: 'ACTION', label: 'Action Pose', icon: 'fa-person-running' },
@@ -758,6 +856,13 @@ const App: React.FC = () => {
                   >
                     <i className="fas fa-wand-magic-sparkles"></i> Forge Canon Composite
                   </button>
+                  <button
+                    onClick={handleGenVideo}
+                    disabled={genState.isGenerating}
+                    className="w-full bg-slate-800 hover:bg-slate-700 border border-indigo-500/30 hover:border-indigo-500/60 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50 text-white"
+                  >
+                    <i className="fas fa-film"></i> Forge Video Clip
+                  </button>
 
                   <div className="pt-2">
                     <p className="text-[9px] text-slate-500 italic text-center">
@@ -787,6 +892,42 @@ const App: React.FC = () => {
                   </div>
                 )}
               </div>
+
+              {videoClips.length > 0 && (
+                <div className="space-y-4">
+                  <h3 className="text-sm font-bold uppercase tracking-widest text-indigo-400">
+                    <i className="fas fa-film mr-2"></i>Video Clips
+                  </h3>
+                  <div className="grid grid-cols-1 gap-6">
+                    {videoClips.map((clip: VideoClip) => (
+                      <div key={clip.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg">
+                        <video
+                          src={clip.url}
+                          controls
+                          autoPlay
+                          loop
+                          className="w-full"
+                        />
+                        <div className="p-3 flex justify-between items-center text-[10px] uppercase tracking-tighter">
+                          <div>
+                            <span className="text-indigo-400 font-bold">{clip.characterName}</span>
+                            <span className="text-slate-500 mx-1">@</span>
+                            <span className="text-slate-400">{clip.setName}</span>
+                          </div>
+                          <a
+                            href={clip.url}
+                            download={`canon_video_${clip.id.slice(0, 5)}.mp4`}
+                            className="text-slate-500 hover:text-white transition-colors"
+                            title="Download clip"
+                          >
+                            <i className="fas fa-download"></i>
+                          </a>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
