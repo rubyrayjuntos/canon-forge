@@ -85,7 +85,7 @@ const SceneForgePanel: React.FC<SceneForgePanelProps> = ({
     const frameCount = activeScene.frames.length;
     const timestampSeconds = frameIndex * interval;
     const beat = activeScene.manualBeats[frameIndex] ?? '';
-    const prompt = buildKeyframePrompt(char, set, activeScene.sceneAction, frameIndex, frameCount, timestampSeconds, beat);
+    const prompt = buildKeyframePrompt(char, set, activeScene.sceneAction, frameIndex, frameCount, timestampSeconds, beat, char.wardrobe);
 
     handleFrameUpdate(frameIndex, { status: 'generating', url: '', promptUsed: prompt });
 
@@ -100,6 +100,7 @@ const SceneForgePanel: React.FC<SceneForgePanelProps> = ({
           fastRender: true,
           provider: providerConfig.provider,
           model: providerConfig.model,
+          referenceImage: char.canonHeadshotUrl,
         }),
       });
       const data = await res.json();
@@ -146,7 +147,7 @@ const SceneForgePanel: React.FC<SceneForgePanelProps> = ({
     setActiveScene(newScene);
     setIsForging(true);
     try {
-      await generateKeyframeSequence(char, set, newScene, providerConfig, handleFrameUpdate);
+      await generateKeyframeSequence(char, set, newScene, providerConfig, char.canonHeadshotUrl, handleFrameUpdate);
     } finally {
       setIsForging(false);
     }
