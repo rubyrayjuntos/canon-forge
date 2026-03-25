@@ -35,32 +35,89 @@ interface CharacterProfile {
 
 ## Feature 1: Canon Face
 
-### Entry point
+### Entry point — App.tsx wiring
 
-Clicking the **HEADSHOT** button in CharacterForge opens `CanonHeadshotDialog` instead of generating immediately. If the user skips, the dialog closes and the existing headshot generation runs normally (no behavior change for users who don't want to use a reference).
+The HEADSHOT button is rendered inside `ReferenceGallery` which calls `onGenerate={(t) => handleGen(t, 'CharacterForge')}`. To intercept it, `handleGen` gains an early-return branch:
 
-### CanonHeadshotDialog — three states
+```ts
+const handleGen = async (type: string, forgeType: AppTab) => {
+  if (type === 'HEADSHOT' && forgeType === 'CharacterForge') {
+    setIsCanonDialogOpen(true);  // open dialog instead of generating
+    return;
+  }
+  // ... existing handleGen logic unchanged ...
+};
+```
+
+Two new App.tsx state variables:
+```ts
+const [isCanonDialogOpen, setIsCanonDialogOpen] = useState(false);
+const [pendingNormalHeadshot, setPendingNormalHeadshot] = useState(false);
+```
+
+`CanonHeadshotDialog` is rendered at the root of the CharacterForge tab section (sibling to `ReferenceGallery`):
+```tsx
+<CanonHeadshotDialog
+  isOpen={isCanonDialogOpen}
+  profile={charProfile}
+  fastRender={fastRender}
+  providerConfig={providerConfig}
+  onApprove={(url) => {
+    setCharProfile({ ...charProfile, canonHeadshotUrl: url });
+    setIsCanonDialogOpen(false);
+  }}
+  onSkip={() => {
+    setIsCanonDialogOpen(false);
+    setPendingNormalHeadshot(true);   // triggers normal headshot generation
+  }}
+/>
+```
+
+A `useEffect` in App.tsx fires normal headshot generation when `pendingNormalHeadshot` becomes true:
+```ts
+useEffect(() => {
+  if (!pendingNormalHeadshot) return;
+  setPendingNormalHeadshot(false);
+  handleGen('HEADSHOT', 'CharacterForge');  // re-enters handleGen, dialog is closed so falls through
+}, [pendingNormalHeadshot]);
+```
+
+### `CanonHeadshotDialog` props interface
+
+```tsx
+interface CanonHeadshotDialogProps {
+  isOpen: boolean;
+  profile: CharacterProfile;
+  fastRender: boolean;
+  providerConfig: ProviderConfig;
+  onApprove: (canonUrl: string) => void;   // called with generated data URL on approval
+  onSkip: () => void;                       // closes dialog, triggers normal headshot generation
+}
+```
+
+### Dialog — three states
 
 #### State 1: Upload
-- File drop zone (click or drag-and-drop). Accepts image files only.
-- Character name and profile summary shown so user has context.
-- **Skip** button — closes dialog and triggers normal headshot generation.
-- On file selection: preview of uploaded image appears. **Generate Canon Headshot** button becomes enabled.
+- File drop zone (click or drag-and-drop).
+- **File validation**: on selection, check `file.type.startsWith('image/')`. If not an image, show an inline error: *"Please select an image file."* Do not advance past this state.
+- **Size validation**: if `file.size > 10 * 1024 * 1024` (10 MB), show an inline error: *"Image is too large. Please use a file under 10 MB."* Do not advance.
+- **Client-side downscale**: before encoding to base64, draw to a canvas and resize so the longest dimension is ≤ 1024px. This keeps the base64 payload under ~500 KB.
+- Character name and brief profile summary shown for context.
+- **Skip** button — calls `onSkip()`.
+- On valid file selection: preview of uploaded image appears. **Generate Canon Headshot** button becomes enabled.
 
 #### State 2: Generating
-- Spinner displayed. Reference photo remains visible.
-- Calls `/api/generate` with the reference image and the canon headshot prompt (see below).
+- Spinner: *"Creating your canon headshot…"* Reference photo remains visible.
+- If the API call fails (network error, safety block, timeout): transition to **Error state** — show the error message, a **Try Again** button (returns to State 1 with the same file pre-loaded), and a **Skip** button.
 
 #### State 3: Review
 - Side-by-side: reference photo (left) | generated canon headshot (right).
 - Three actions:
-  - **✓ Approve as Canon Face** — stores the generated URL as `canonHeadshotUrl` on the profile; dialog closes.
-  - **↻ Retry** — regenerates with the same reference image (re-enters State 2).
-  - **Skip (use without locking)** — discards the generated image; dialog closes without storing anything; triggers normal headshot generation.
+  - **✓ Approve as Canon Face** — calls `onApprove(generatedUrl)`.
+  - **↻ Retry** — re-enters State 2 with the same reference image.
+  - **Skip (use without locking)** — calls `onSkip()`.
 
 ### Canon headshot generation prompt
-
-Same as the existing HEADSHOT template with one addition:
 
 ```
 ${AESTHETIC_PROMPT_CORE}
@@ -76,11 +133,11 @@ contents: [{ parts: [{ inlineData: { mimeType, data: b64 } }, { text: prompt }] 
 
 ### Venice limitation
 
-Venice is text-to-image only in the current integration. When the active provider is Venice and a reference image is provided, a note is displayed in the dialog: *"Reference image is not supported with Venice — canon headshot will be generated from description only."* Generation proceeds without the image part.
+When `providerConfig.provider === 'venice'`, the dialog displays: *"Reference image is not supported with Venice — canon headshot will be generated from description only."* The `referenceImage` field is omitted from the fetch body; generation proceeds text-only.
 
 ### Clearing the canon face
 
-A small **× Clear canon face** link appears in the CharacterForm when `canonHeadshotUrl` is set. Clicking it sets `canonHeadshotUrl` to `undefined` (with no other profile changes). A thumbnail of the current canon face is shown next to the clear link so the user knows what is locked.
+A small **× Clear canon face** link appears in CharacterForm when `canonHeadshotUrl` is set, alongside a thumbnail of the locked face. Clicking it sets `canonHeadshotUrl` to `undefined` on the profile (no other changes).
 
 ---
 
@@ -88,38 +145,50 @@ A small **× Clear canon face** link appears in the CharacterForm when `canonHea
 
 ### CharacterForm
 
-A new **Signature Wardrobe** text input added to CharacterForm, below the Distinctive Features field:
+A new **Signature Wardrobe** text input added below the Distinctive Features field:
 
 ```
 Label: Signature Wardrobe
 Placeholder: e.g. weathered black leather jacket, cargo pants, neon circuit-trace collar
+Name: wardrobe
 ```
 
-Free-text, single line. Empty by default.
+Free-text, single line. Handled by the existing `handleChange` in `CharacterForm`.
 
 ### Prompt injection
 
-When `profile.wardrobe` is non-empty, the following line is appended to the character identity block in every generation prompt:
+When `profile.wardrobe` is non-empty, the following line is appended to the character identity block:
 
 ```
 Signature Wardrobe: ${profile.wardrobe}.
 ```
 
 Applied in:
-- `generateCharacterImage` (all `ReferenceType` values)
-- `generateCompositeImage`
+- `generateCharacterImage` in `geminiService.ts` (all `ReferenceType` values)
+- `generateCompositeImage` in `geminiService.ts`
 - `buildKeyframePrompt` in `keyframeService.ts`
+
+**`pollinationsService.ts`** (used for fast-render generations in App.tsx lines 391–399) is out of scope for v1. Wardrobe injection is not added there; fast-render generations will omit wardrobe when `fastRender` is true.
 
 ---
 
 ## Server Changes (`server/index.js`)
+
+### JSON payload limit
+
+Increase from `1mb` to `20mb` to accommodate base64-encoded reference images:
+```js
+app.use(express.json({ limit: '20mb' }));
+```
+
+### Reference image support
 
 `/api/generate` accepts one new optional field: `referenceImage` (a data URL string).
 
 **Gemini path** — when `referenceImage` is present:
 ```js
 const parts = [];
-if (referenceImage && provider !== 'venice') {
+if (referenceImage) {
   const match = referenceImage.match(/^data:([^;]+);base64,(.+)$/);
   if (match) parts.push({ inlineData: { mimeType: match[1], data: match[2] } });
 }
@@ -137,24 +206,51 @@ parts.push({ text: prompt });
 
 `callGemini` gains an optional `referenceImage?: string` parameter, forwarded in the POST body.
 
-All three public generation functions pass `profile.canonHeadshotUrl` (or `char.canonHeadshotUrl`) as `referenceImage`:
-
 | Function | Source of reference |
 |---|---|
 | `generateCharacterImage(profile, type, fastRender)` | `profile.canonHeadshotUrl` |
 | `generateCompositeImage(char, set, config, fastRender)` | `char.canonHeadshotUrl` |
-| `generateSetImage` | none (set generation — not applicable) |
+| `generateSetImage` | none — not applicable |
 
 ### `keyframeService.ts`
 
-`generateKeyframeSequence` signature gains `canonHeadshotUrl?: string`. The fetch body includes `referenceImage: canonHeadshotUrl` when set.
+`generateKeyframeSequence` gains `canonHeadshotUrl?: string` as a **5th parameter** (after `providerConfig`, before `onFrameUpdate`):
 
-`buildKeyframePrompt` gains `wardrobe: string` parameter and appends `Signature Wardrobe: ${wardrobe}.` when non-empty.
+```ts
+export async function generateKeyframeSequence(
+  char: CharacterProfile,
+  set: SetProfile,
+  scene: KeyframeScene,
+  providerConfig: ProviderConfig,
+  canonHeadshotUrl: string | undefined,
+  onFrameUpdate: (frameIndex: number, update: Partial<Keyframe>) => void
+): Promise<void>
+```
+
+The fetch body includes `referenceImage: canonHeadshotUrl` (passes `undefined` when not set; server ignores falsy values).
+
+`buildKeyframePrompt` gains `wardrobe: string` as an **8th parameter** (after `beat`):
+
+```ts
+export function buildKeyframePrompt(
+  char: CharacterProfile,
+  set: SetProfile,
+  sceneAction: string,
+  frameIndex: number,
+  frameCount: number,
+  timestampSeconds: number,
+  beat: string,
+  wardrobe: string
+): string
+```
+
+When `wardrobe` is non-empty, appends `Signature Wardrobe: ${wardrobe}.` to the character identity block.
 
 ### `SceneForgePanel.tsx`
 
-`handleForge` passes `char.canonHeadshotUrl` to `generateKeyframeSequence`.
-`handleRegenerate` includes `referenceImage: char.canonHeadshotUrl` in its fetch body.
+`handleForge` passes `char.canonHeadshotUrl` as the 5th argument to `generateKeyframeSequence` and `char.wardrobe` as the 8th argument to `buildKeyframePrompt`.
+
+`handleRegenerate` — which calls `buildKeyframePrompt` directly (line 88) — passes `char.wardrobe` as the new 8th argument, and includes `referenceImage: char.canonHeadshotUrl` in its fetch body.
 
 ---
 
@@ -164,13 +260,13 @@ All three public generation functions pass `profile.canonHeadshotUrl` (or `char.
 |---|---|
 | `types.ts` | Add `canonHeadshotUrl?: string` and `wardrobe: string` to `CharacterProfile` |
 | `constants.ts` | Add `wardrobe: ''` to `INITIAL_CHARACTER_PROFILE` |
-| `components/CharacterForm.tsx` | Add Wardrobe field; add canon face thumbnail + clear link |
-| `components/CanonHeadshotDialog.tsx` | **New** — three-state dialog |
-| `services/geminiService.ts` | Add `referenceImage` param to `callGemini`; propagate from all public functions |
-| `services/keyframeService.ts` | Add `canonHeadshotUrl` to `generateKeyframeSequence`; add `wardrobe` to `buildKeyframePrompt` |
-| `components/SceneForgePanel.tsx` | Pass `char.canonHeadshotUrl` and `char.wardrobe` through to generation calls |
-| `server/index.js` | Accept and apply `referenceImage` in Gemini path |
-| `App.tsx` | Wire `CanonHeadshotDialog` open/close state; pass `canonHeadshotUrl` on approve |
+| `components/CharacterForm.tsx` | Add Wardrobe input field; add canon face thumbnail + clear link |
+| `components/CanonHeadshotDialog.tsx` | **New** — three-state dialog with error state and file validation |
+| `services/geminiService.ts` | Add `referenceImage` param to `callGemini`; propagate from `generateCharacterImage` and `generateCompositeImage`; inject `wardrobe` in prompts |
+| `services/keyframeService.ts` | Add `canonHeadshotUrl` (5th param) to `generateKeyframeSequence`; add `wardrobe` (8th param) to `buildKeyframePrompt` |
+| `components/SceneForgePanel.tsx` | Pass `char.canonHeadshotUrl` and `char.wardrobe` to `generateKeyframeSequence`, `buildKeyframePrompt`, and `handleRegenerate` fetch body |
+| `server/index.js` | Increase JSON limit to `20mb`; accept and apply `referenceImage` in Gemini path |
+| `App.tsx` | Add `isCanonDialogOpen` / `pendingNormalHeadshot` state; intercept HEADSHOT in `handleGen`; render `CanonHeadshotDialog` |
 
 ---
 
@@ -180,3 +276,4 @@ All three public generation functions pass `profile.canonHeadshotUrl` (or `char.
 - Multi-image reference sets (front + profile)
 - Persisting canon face to localStorage
 - Using the `BODY_REVERSE` body sheet as a full-body reference
+- Wardrobe injection in `pollinationsService.ts` (fast-render path)
