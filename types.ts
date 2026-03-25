@@ -21,6 +21,8 @@ export interface CharacterProfile {
   undergarmentType: string;
   undergarmentFit: string;
   undergarmentStyle: string;
+  canonHeadshotUrl?: string;  // data URL of approved canon headshot; undefined until locked
+  wardrobe: string;           // e.g. "weathered black leather jacket, cargo pants"
 }
 
 export interface SetProfile {

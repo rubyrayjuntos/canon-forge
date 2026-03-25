@@ -75,6 +75,7 @@ export const INITIAL_CHARACTER_PROFILE = {
   undergarmentType: 'Minimal briefs',
   undergarmentFit: 'Standard',
   undergarmentStyle: 'Matte black',
+  wardrobe: '',
 };
 
 export const INITIAL_SET_PROFILE = {
