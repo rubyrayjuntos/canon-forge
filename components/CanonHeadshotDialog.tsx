@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { CharacterProfile } from '../types';
 import { ProviderConfig } from '../services/geminiService';
 import { AESTHETIC_PROMPT_CORE } from '../constants';
@@ -55,6 +55,17 @@ const CanonHeadshotDialog: React.FC<CanonHeadshotDialogProps> = ({
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [fileError, setFileError] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setState('upload');
+      setSelectedFile(null);
+      setPreviewUrl(null);
+      setGeneratedUrl(null);
+      setErrorMessage('');
+      setFileError('');
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
