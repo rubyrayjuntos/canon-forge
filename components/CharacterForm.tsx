@@ -34,6 +34,24 @@ const CharacterForm: React.FC<CharacterFormProps> = ({ profile, setProfile, onRa
 
   return (
     <div className="space-y-6">
+      {profile.canonHeadshotUrl && (
+        <div className="flex items-center gap-3 bg-slate-800/50 border border-indigo-500/30 rounded-lg px-3 py-2">
+          <img
+            src={profile.canonHeadshotUrl}
+            alt="Canon face"
+            className="w-10 h-10 rounded-full object-cover border border-indigo-500/50"
+          />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-indigo-400 font-mono uppercase tracking-wider">Canon Face Locked</p>
+          </div>
+          <button
+            onClick={(e) => { e.preventDefault(); setProfile({ ...profile, canonHeadshotUrl: undefined }); }}
+            className="text-[10px] text-slate-500 hover:text-red-400 transition-colors"
+          >
+            × Clear
+          </button>
+        </div>
+      )}
       <div className="flex justify-between items-center mb-2">
         <label className={labelClass}>Gender Identity</label>
         <button 
@@ -80,6 +98,16 @@ const CharacterForm: React.FC<CharacterFormProps> = ({ profile, setProfile, onRa
         <div>
           <label className={labelClass}>Distinctive Features</label>
           <input name="distinctiveFeatures" value={profile.distinctiveFeatures} onChange={handleChange} className={inputClass} placeholder="e.g. Mechanical eye" />
+        </div>
+        <div className="md:col-span-2">
+          <label className={labelClass}>Signature Wardrobe</label>
+          <input
+            name="wardrobe"
+            value={profile.wardrobe}
+            onChange={handleChange}
+            className={inputClass}
+            placeholder="e.g. weathered black leather jacket, cargo pants, neon circuit-trace collar"
+          />
         </div>
       </div>
       
