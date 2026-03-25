@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   CharacterProfile,
   SetProfile,
@@ -31,6 +31,7 @@ import Toast from './components/Toast';
 import { downloadImage } from './utils/helpers';
 import { loadSavedCharacters, loadSavedSets, saveCharacters, saveSets } from './utils/storage';
 import { useClipboard } from './hooks/useClipboard';
+import CanonHeadshotDialog from './components/CanonHeadshotDialog';
 
 // --- Helper Functions ---
 const generateId = (): string => Math.random().toString(36).substring(2, 15);
@@ -329,6 +330,8 @@ const App: React.FC = () => {
     statusMessage: '',
   });
   const [fastRender, setFastRender] = useState<boolean>(false);
+  const [isCanonDialogOpen, setIsCanonDialogOpen] = useState(false);
+  const skipDialogRef = useRef(false);
   const [toastState, setToastState] = useState<ToastState>({
     message: '',
     type: 'success',
@@ -383,6 +386,11 @@ const App: React.FC = () => {
   };
 
   const handleGen = async (type: string, forgeType: AppTab) => {
+    if (type === 'HEADSHOT' && forgeType === 'CharacterForge' && !skipDialogRef.current) {
+      setIsCanonDialogOpen(true);
+      return;
+    }
+    skipDialogRef.current = false;
     setGenState({ isGenerating: true, statusMessage: `Forging ${type}...` });
     try {
       let result;
@@ -587,6 +595,7 @@ const App: React.FC = () => {
 
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 lg:p-10">
         {activeTab === 'CharacterForge' && (
+          <>
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-in fade-in duration-500">
             <div className="lg:col-span-4 bg-slate-900/40 border border-slate-800 rounded-2xl p-6 h-fit shadow-xl">
               <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-2">
@@ -678,6 +687,22 @@ const App: React.FC = () => {
               />
             </div>
           </div>
+          <CanonHeadshotDialog
+            isOpen={isCanonDialogOpen}
+            profile={charProfile}
+            fastRender={fastRender}
+            providerConfig={providerConfig}
+            onApprove={(url) => {
+              setCharProfile({ ...charProfile, canonHeadshotUrl: url });
+              setIsCanonDialogOpen(false);
+            }}
+            onSkip={() => {
+              setIsCanonDialogOpen(false);
+              skipDialogRef.current = true;
+              handleGen('HEADSHOT', 'CharacterForge');
+            }}
+          />
+          </>
         )}
 
         {activeTab === 'SetForge' && (
