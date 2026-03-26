@@ -1,0 +1,123 @@
+<h2>SceneForge Tab — Layout Options</h2>
+<p class="subtitle">How should the configuration and filmstrip be arranged?</p>
+
+<div class="options" style="flex-direction: column; gap: 32px;">
+
+  <div class="option" data-choice="a" onclick="toggleSelect(this)" style="flex-direction: column; align-items: stretch; padding: 0; overflow: hidden;">
+    <div style="display:flex; align-items:center; gap: 12px; padding: 16px 20px; background: rgba(255,255,255,0.05);">
+      <div class="letter">A</div>
+      <div>
+        <h3 style="margin:0">Split Panel</h3>
+        <p style="margin:0; font-size:13px; opacity:0.7">Config on left, filmstrip fills the right — always visible side by side</p>
+      </div>
+    </div>
+    <div class="mockup-body" style="padding: 16px; background: rgba(0,0,0,0.3);">
+      <div style="display:flex; gap:12px; height: 240px;">
+        <!-- Left config panel -->
+        <div style="width: 260px; flex-shrink:0; background:#1a1a2e; border:1px solid rgba(99,179,237,0.2); border-radius:8px; padding:14px; display:flex; flex-direction:column; gap:10px;">
+          <div style="font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#63b3ed; opacity:0.7">Scene Config</div>
+          <div class="mock-input" style="font-size:12px; background:#0d1117; border:1px solid #333; padding:6px 10px; border-radius:4px; color:#aaa;">Character: Kael ▾</div>
+          <div class="mock-input" style="font-size:12px; background:#0d1117; border:1px solid #333; padding:6px 10px; border-radius:4px; color:#aaa;">Set: The Warehouse ▾</div>
+          <div style="background:#0d1117; border:1px solid #333; border-radius:4px; padding:6px 10px; font-size:12px; color:#666; min-height:48px;">walks to the window...</div>
+          <div style="display:flex; gap:8px;">
+            <div style="flex:1; background:#0d1117; border:1px solid #333; border-radius:4px; padding:6px 8px; font-size:11px; color:#aaa; text-align:center;">32s total</div>
+            <div style="flex:1; background:#0d1117; border:1px solid #333; border-radius:4px; padding:6px 8px; font-size:11px; color:#aaa; text-align:center;">8s interval</div>
+          </div>
+          <div style="display:flex; gap:6px; margin-top:2px;">
+            <div style="flex:1; background:rgba(99,179,237,0.15); border:1px solid rgba(99,179,237,0.4); border-radius:4px; padding:5px; font-size:11px; color:#63b3ed; text-align:center;">Auto</div>
+            <div style="flex:1; background:transparent; border:1px solid #333; border-radius:4px; padding:5px; font-size:11px; color:#555; text-align:center;">Manual</div>
+          </div>
+          <div style="margin-top:auto; background:linear-gradient(135deg,#4c1d95,#1e3a5f); border-radius:6px; padding:8px; text-align:center; font-size:12px; color:#e2e8f0; font-weight:600;">⚡ Forge Keyframes</div>
+        </div>
+        <!-- Right filmstrip area -->
+        <div style="flex:1; background:#0d1117; border:1px solid rgba(99,179,237,0.15); border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
+          <div style="padding:10px 14px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:space-between;">
+            <span style="font-size:12px; color:#63b3ed; opacity:0.8">5 frames · 32s scene</span>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <div style="width:28px; height:28px; background:rgba(99,179,237,0.15); border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:14px;">▶</div>
+              <span style="font-size:11px; color:#555;">2 fps</span>
+            </div>
+          </div>
+          <div style="display:flex; gap:8px; padding:12px; overflow-x:auto; flex:1; align-items:center;">
+            <div style="width:80px; height:120px; background:linear-gradient(160deg,#1a1a3e,#0d2040); border:2px solid #63b3ed; border-radius:6px; flex-shrink:0; display:flex; flex-direction:column; justify-content:flex-end; padding:6px; position:relative;">
+              <div style="position:absolute; top:4px; left:6px; font-size:9px; color:#63b3ed; opacity:0.8">0s</div>
+              <div style="font-size:9px; color:#aaa; text-align:center;">Frame 1</div>
+            </div>
+            <div style="width:80px; height:120px; background:linear-gradient(160deg,#1a2a2e,#0d1a30); border:1px solid #333; border-radius:6px; flex-shrink:0; display:flex; flex-direction:column; justify-content:flex-end; padding:6px; position:relative;">
+              <div style="position:absolute; top:4px; left:6px; font-size:9px; color:#555;">8s</div>
+              <div style="font-size:9px; color:#555; text-align:center;">Frame 2</div>
+            </div>
+            <div style="width:80px; height:120px; background:linear-gradient(160deg,#1a2a2e,#0d1a30); border:1px solid #333; border-radius:6px; flex-shrink:0; display:flex; flex-direction:column; justify-content:flex-end; padding:6px; position:relative;">
+              <div style="position:absolute; top:4px; left:6px; font-size:9px; color:#555;">16s</div>
+              <div style="font-size:9px; color:#555; text-align:center;">Frame 3</div>
+            </div>
+            <div style="width:80px; height:120px; background:#111; border:1px solid #222; border-radius:6px; flex-shrink:0; display:flex; align-items:center; justify-content:center;">
+              <div style="font-size:18px; opacity:0.3">⟳</div>
+            </div>
+            <div style="width:80px; height:120px; background:#111; border:1px solid #222; border-radius:6px; flex-shrink:0; display:flex; align-items:center; justify-content:center;">
+              <div style="font-size:18px; opacity:0.3">⟳</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)" style="flex-direction: column; align-items: stretch; padding: 0; overflow: hidden;">
+    <div style="display:flex; align-items:center; gap: 12px; padding: 16px 20px; background: rgba(255,255,255,0.05);">
+      <div class="letter">B</div>
+      <div>
+        <h3 style="margin:0">Stacked</h3>
+        <p style="margin:0; font-size:13px; opacity:0.7">Compact config bar on top, full-width filmstrip below — more room for frames</p>
+      </div>
+    </div>
+    <div class="mockup-body" style="padding: 16px; background: rgba(0,0,0,0.3);">
+      <div style="display:flex; flex-direction:column; gap:10px; height: 240px;">
+        <!-- Top config bar -->
+        <div style="background:#1a1a2e; border:1px solid rgba(99,179,237,0.2); border-radius:8px; padding:12px 16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+          <div style="font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#63b3ed; opacity:0.7; margin-right:4px;">Scene</div>
+          <div class="mock-input" style="font-size:12px; background:#0d1117; border:1px solid #333; padding:5px 10px; border-radius:4px; color:#aaa;">Kael ▾</div>
+          <div class="mock-input" style="font-size:12px; background:#0d1117; border:1px solid #333; padding:5px 10px; border-radius:4px; color:#aaa;">The Warehouse ▾</div>
+          <div style="flex:1; min-width:160px; background:#0d1117; border:1px solid #333; border-radius:4px; padding:5px 10px; font-size:12px; color:#666;">walks to the window...</div>
+          <div style="background:#0d1117; border:1px solid #333; border-radius:4px; padding:5px 10px; font-size:11px; color:#aaa; white-space:nowrap;">32s · 8s interval</div>
+          <div style="display:flex; gap:6px;">
+            <div style="background:rgba(99,179,237,0.15); border:1px solid rgba(99,179,237,0.4); border-radius:4px; padding:5px 10px; font-size:11px; color:#63b3ed;">Auto</div>
+            <div style="background:transparent; border:1px solid #333; border-radius:4px; padding:5px 10px; font-size:11px; color:#555;">Manual</div>
+          </div>
+          <div style="background:linear-gradient(135deg,#4c1d95,#1e3a5f); border-radius:6px; padding:6px 14px; font-size:12px; color:#e2e8f0; font-weight:600; white-space:nowrap;">⚡ Forge</div>
+        </div>
+        <!-- Bottom filmstrip -->
+        <div style="flex:1; background:#0d1117; border:1px solid rgba(99,179,237,0.15); border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
+          <div style="padding:8px 14px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:space-between;">
+            <span style="font-size:12px; color:#63b3ed; opacity:0.8">5 frames · 32s scene</span>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <div style="width:26px; height:26px; background:rgba(99,179,237,0.15); border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px;">▶</div>
+              <span style="font-size:11px; color:#555;">2 fps</span>
+            </div>
+          </div>
+          <div style="display:flex; gap:10px; padding:12px; overflow-x:auto; flex:1; align-items:center;">
+            <div style="height:90px; width:135px; background:linear-gradient(160deg,#1a1a3e,#0d2040); border:2px solid #63b3ed; border-radius:6px; flex-shrink:0; display:flex; flex-direction:column; justify-content:flex-end; padding:6px; position:relative;">
+              <div style="position:absolute; top:4px; left:6px; font-size:9px; color:#63b3ed; opacity:0.8">0s</div>
+              <div style="font-size:9px; color:#aaa; text-align:center;">Frame 1</div>
+            </div>
+            <div style="height:90px; width:135px; background:linear-gradient(160deg,#1a2a2e,#0d1a30); border:1px solid #333; border-radius:6px; flex-shrink:0; display:flex; flex-direction:column; justify-content:flex-end; padding:6px; position:relative;">
+              <div style="position:absolute; top:4px; left:6px; font-size:9px; color:#555;">8s</div>
+              <div style="font-size:9px; color:#555; text-align:center;">Frame 2</div>
+            </div>
+            <div style="height:90px; width:135px; background:linear-gradient(160deg,#1a2a2e,#0d1a30); border:1px solid #333; border-radius:6px; flex-shrink:0; display:flex; flex-direction:column; justify-content:flex-end; padding:6px; position:relative;">
+              <div style="position:absolute; top:4px; left:6px; font-size:9px; color:#555;">16s</div>
+              <div style="font-size:9px; color:#555; text-align:center;">Frame 3</div>
+            </div>
+            <div style="height:90px; width:135px; background:#111; border:1px solid #222; border-radius:6px; flex-shrink:0; display:flex; align-items:center; justify-content:center;">
+              <div style="font-size:18px; opacity:0.3">⟳</div>
+            </div>
+            <div style="height:90px; width:135px; background:#111; border:1px solid #222; border-radius:6px; flex-shrink:0; display:flex; align-items:center; justify-content:center;">
+              <div style="font-size:18px; opacity:0.3">⟳</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>

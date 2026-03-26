@@ -485,7 +485,6 @@ const App: React.FC = () => {
 
     setSetProfile({
       ...setProfile,
-      seed: generateSeed(),
       name: pick(types[setProfile.locationType]),
       lighting: pick(lighting),
       ambiance: pick(ambiance),
