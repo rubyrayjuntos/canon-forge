@@ -8,6 +8,7 @@ import {
 import { AESTHETIC_PROMPT_CORE, CHARACTER_TEMPLATES, SET_TEMPLATES } from '../constants';
 
 const POLLINATIONS_BASE_URL = 'https://image.pollinations.ai/prompt';
+const USE_LOCAL_SD = import.meta.env.VITE_USE_LOCAL_SD === 'true';
 
 interface GenerationResult {
   url: string;
@@ -34,15 +35,31 @@ function getImageDimensions(aspectRatio: '1:1' | '3:4' | '4:3' | '9:16' | '16:9'
   return dimensions[aspectRatio] || dimensions['16:9'];
 }
 
-/**
- * Generate an image using Pollinations.ai
- * No API key required - completely free and permissive
- */
+async function callLocalSdProxy(
+  prompt: string,
+  seed: number,
+  aspectRatio: '1:1' | '3:4' | '4:3' | '9:16' | '16:9'
+): Promise<GenerationResult> {
+  const safeSeed = Math.abs(Math.floor(seed));
+  const response = await fetch('/api/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, seed: safeSeed, aspectRatio, provider: 'local-sd' }),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error || `Local SD failed: ${response.status}`);
+  }
+  return response.json() as Promise<GenerationResult>;
+}
+
 async function callPollinations(
   prompt: string,
   seed: number,
   aspectRatio: '1:1' | '3:4' | '4:3' | '9:16' | '16:9' = '16:9'
 ): Promise<GenerationResult> {
+  if (USE_LOCAL_SD) return callLocalSdProxy(prompt, seed, aspectRatio);
+
   const { width, height } = getImageDimensions(aspectRatio);
   const safeSeed = Math.abs(Math.floor(seed));
 
@@ -51,7 +68,7 @@ async function callPollinations(
   const encodedPrompt = encodeURIComponent(trimmedPrompt);
 
   // Construct Pollinations URL with parameters
-  const imageUrl = `${POLLINATIONS_BASE_URL}/${encodedPrompt}?seed=${safeSeed}&width=${width}&height=${height}&nologo=true&model=flux`;
+  const imageUrl = `${POLLINATIONS_BASE_URL}/${encodedPrompt}?seed=${safeSeed}&width=${width}&height=${height}&nologo=true&model=flux&safe=false`;
 
   // Return the URL directly - Pollinations generates on-demand when the URL is accessed
   // No need to verify here as it adds latency and can fail due to CORS

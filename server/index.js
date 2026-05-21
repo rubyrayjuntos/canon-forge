@@ -80,6 +80,43 @@ app.post('/api/generate', async (req, res) => {
   console.log(`[generate] start provider=${provider} model=${model || 'default'} ratio=${ratio} seed=${safeSeed}`);
 
   try {
+    // --- Local Stable Diffusion (AUTOMATIC1111) ---
+    if (provider === 'local-sd') {
+      const localSdUrl = process.env.LOCAL_SD_URL || 'http://localhost:7860';
+      const { width, height } = VENICE_ASPECT_RATIO_MAP[ratio] || VENICE_ASPECT_RATIO_MAP['16:9'];
+
+      const sdRes = await Promise.race([
+        fetch(`${localSdUrl}/sdapi/v1/txt2img`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt,
+            negative_prompt:
+              'deformed, disfigured, bad anatomy, extra limbs, missing limbs, watermark, text, blurry, low quality',
+            steps: 30,
+            width,
+            height,
+            seed: safeSeed,
+            cfg_scale: 7,
+            sampler_name: 'DPM++ 2M Karras',
+          }),
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), REQUEST_TIMEOUT_MS)),
+      ]);
+
+      if (!sdRes.ok) {
+        const text = await sdRes.text();
+        console.error('[local-sd] error:', sdRes.status, text.slice(0, 200));
+        return res.status(502).json({ error: 'LOCAL_SD_ERROR' });
+      }
+
+      const sdData = await sdRes.json();
+      const b64 = sdData?.images?.[0];
+      if (!b64) return res.status(502).json({ error: 'NO_IMAGE_DATA' });
+      console.log(`[local-sd] done in ${Date.now() - startedAt}ms`);
+      return res.json({ url: `data:image/png;base64,${b64}`, prompt });
+    }
+
     // --- Venice AI ---
     if (provider === 'venice') {
       const veniceKey = process.env.VENICE_API_KEY;
