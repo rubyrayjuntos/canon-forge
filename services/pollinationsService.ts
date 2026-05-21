@@ -51,7 +51,7 @@ async function callPollinations(
   const encodedPrompt = encodeURIComponent(trimmedPrompt);
 
   // Construct Pollinations URL with parameters
-  const imageUrl = `${POLLINATIONS_BASE_URL}/${encodedPrompt}?seed=${safeSeed}&width=${width}&height=${height}&nologo=true&model=flux`;
+  const imageUrl = `${POLLINATIONS_BASE_URL}/${encodedPrompt}?seed=${safeSeed}&width=${width}&height=${height}&nologo=true&model=flux&safe=false`;
 
   // Return the URL directly - Pollinations generates on-demand when the URL is accessed
   // No need to verify here as it adds latency and can fail due to CORS
