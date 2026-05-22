@@ -1,5 +1,5 @@
-# ---- Build stage ----
-FROM node:22-alpine AS builder
+# ---- Development stage ----
+FROM node:22-alpine AS development
 
 WORKDIR /app
 
@@ -7,21 +7,9 @@ COPY package*.json ./
 RUN npm ci
 
 COPY . .
-RUN npm run build
 
-# ---- Production stage ----
-FROM node:22-alpine AS production
+EXPOSE 3000 3001
 
-WORKDIR /app
+CMD ["npm", "run", "dev"]
 
-ENV NODE_ENV=production
-
-COPY package*.json ./
-RUN npm ci --omit=dev
-
-COPY --from=builder /app/dist ./dist
-COPY server/ ./server/
-
-EXPOSE 3001
-
-CMD ["node", "server/index.js"]
+# ... rest of file stays the same ...

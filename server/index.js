@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
+import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 
 dotenv.config({ path: '.env.local' });
 dotenv.config();
@@ -27,6 +28,94 @@ const VENICE_ASPECT_RATIO_MAP = {
   '9:16': { width: 576,  height: 1024 },
   '16:9': { width: 1280, height: 720  },
 };
+const LOCAL_SD_BASE_RES = process.env.LOCAL_SD_BASE_RES
+  ? Number(process.env.LOCAL_SD_BASE_RES)
+  : 384;
+const LOCAL_SD_STEPS = process.env.LOCAL_SD_STEPS
+  ? Number(process.env.LOCAL_SD_STEPS)
+  : 16;
+const LOCAL_SD_CFG_SCALE = process.env.LOCAL_SD_CFG_SCALE
+  ? Number(process.env.LOCAL_SD_CFG_SCALE)
+  : 7;
+const LOCAL_SD_SAMPLER = process.env.LOCAL_SD_SAMPLER || 'Euler a';
+const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
+const AWS_DEFAULT_IMAGE_MODEL = process.env.AWS_BEDROCK_IMAGE_MODEL || 'amazon.titan-image-generator-v2:0';
+const AWS_IMAGE_MODELS = (process.env.AWS_BEDROCK_IMAGE_MODEL_IDS || AWS_DEFAULT_IMAGE_MODEL)
+  .split(',')
+  .map((m) => m.trim())
+  .filter(Boolean);
+
+let bedrockRuntimeClient;
+function getBedrockRuntimeClient() {
+  if (!bedrockRuntimeClient) {
+    bedrockRuntimeClient = new BedrockRuntimeClient({ region: AWS_REGION });
+  }
+  return bedrockRuntimeClient;
+}
+
+function decodeBody(body) {
+  if (!body) return '';
+  if (typeof body === 'string') return body;
+  if (body instanceof Uint8Array || Buffer.isBuffer(body)) {
+    return Buffer.from(body).toString('utf8');
+  }
+  if (typeof body.transformToString === 'function') {
+    return body.transformToString();
+  }
+  return String(body);
+}
+
+async function generateAwsBedrockImage({ modelId, prompt, width, height, safeSeed }) {
+  const client = getBedrockRuntimeClient();
+  const command = new InvokeModelCommand({
+    modelId,
+    contentType: 'application/json',
+    accept: 'application/json',
+    body: JSON.stringify({
+      taskType: 'TEXT_IMAGE',
+      textToImageParams: {
+        text: prompt,
+      },
+      imageGenerationConfig: {
+        numberOfImages: 1,
+        quality: 'standard',
+        width,
+        height,
+        cfgScale: 7,
+        seed: safeSeed,
+      },
+    }),
+  });
+
+  const response = await client.send(command);
+  const decoded = await decodeBody(response.body);
+  let data = {};
+  try {
+    data = JSON.parse(decoded);
+  } catch {
+    throw new Error('AWS_BAD_RESPONSE');
+  }
+
+  const b64 = data?.images?.[0] || data?.artifacts?.[0]?.base64;
+  if (!b64) {
+    throw new Error('NO_IMAGE_DATA');
+  }
+  return `data:image/png;base64,${b64}`;
+}
+
+function toMultipleOf64(value) {
+  return Math.max(256, Math.round(value / 64) * 64);
+}
+
+function getLocalSdDimensions(aspectRatio) {
+  const fallback = VENICE_ASPECT_RATIO_MAP['16:9'];
+  const source = VENICE_ASPECT_RATIO_MAP[aspectRatio] || fallback;
+  const scale = LOCAL_SD_BASE_RES / Math.max(source.width, source.height);
+  return {
+    width: toMultipleOf64(source.width * scale),
+    height: toMultipleOf64(source.height * scale),
+  };
+}
 
 app.use(express.json({ limit: '20mb' }));
 
@@ -39,7 +128,13 @@ const GEMINI_IMAGE_MODELS = [
 app.get('/api/models', async (req, res) => {
   const geminiKey = process.env.GEMINI_API_KEY;
   const veniceKey = process.env.VENICE_API_KEY;
-  const result = { gemini: [], venice: [] };
+  const awsAccessKey = process.env.AWS_ACCESS_KEY_ID;
+  const awsSecretKey = process.env.AWS_SECRET_ACCESS_KEY;
+  const awsSessionToken = process.env.AWS_SESSION_TOKEN;
+  const hasAwsRuntimeAuth = Boolean(
+    (awsAccessKey && awsSecretKey) || process.env.AWS_PROFILE || process.env.AWS_WEB_IDENTITY_TOKEN_FILE || process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI || process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI || process.env.AWS_EC2_METADATA_DISABLED === 'false'
+  );
+  const result = { gemini: [], venice: [], aws: [] };
 
   if (geminiKey) {
     try {
@@ -65,7 +160,24 @@ app.get('/api/models', async (req, res) => {
     }
   }
 
+  if (hasAwsRuntimeAuth || AWS_IMAGE_MODELS.length > 0) {
+    result.aws = AWS_IMAGE_MODELS.map((id) => ({ id, name: id }));
+  }
+
   return res.json(result);
+});
+
+app.get('/api/local-sd-status', async (req, res) => {
+  const localSdUrl = process.env.LOCAL_SD_URL || 'http://localhost:7860';
+  try {
+    const checkRes = await Promise.race([
+      fetch(`${localSdUrl}/sdapi/v1/sd-models`),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), 3000)),
+    ]);
+    return res.json({ available: checkRes.ok });
+  } catch {
+    return res.json({ available: false });
+  }
 });
 
 app.post('/api/generate', async (req, res) => {
@@ -83,7 +195,7 @@ app.post('/api/generate', async (req, res) => {
     // --- Local Stable Diffusion (AUTOMATIC1111) ---
     if (provider === 'local-sd') {
       const localSdUrl = process.env.LOCAL_SD_URL || 'http://localhost:7860';
-      const { width, height } = VENICE_ASPECT_RATIO_MAP[ratio] || VENICE_ASPECT_RATIO_MAP['16:9'];
+      const { width, height } = getLocalSdDimensions(ratio);
 
       const sdRes = await Promise.race([
         fetch(`${localSdUrl}/sdapi/v1/txt2img`, {
@@ -92,13 +204,13 @@ app.post('/api/generate', async (req, res) => {
           body: JSON.stringify({
             prompt,
             negative_prompt:
-              'deformed, disfigured, bad anatomy, extra limbs, missing limbs, watermark, text, blurry, low quality',
-            steps: 30,
+              'deformed, disfigured, bad anatomy, extra limbs, missing limbs, duplicate body, duplicate person, triptych, diptych, contact sheet, split screen, collage, watermark, text, blurry, low quality',
+            steps: LOCAL_SD_STEPS,
             width,
             height,
             seed: safeSeed,
-            cfg_scale: 7,
-            sampler_name: 'DPM++ 2M Karras',
+            cfg_scale: LOCAL_SD_CFG_SCALE,
+            sampler_name: LOCAL_SD_SAMPLER,
           }),
         }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), REQUEST_TIMEOUT_MS)),
@@ -161,6 +273,17 @@ app.post('/api/generate', async (req, res) => {
       return res.json({ url, prompt });
     }
 
+    // --- AWS Bedrock ---
+    if (provider === 'aws') {
+      const { width, height } = VENICE_ASPECT_RATIO_MAP[ratio] || VENICE_ASPECT_RATIO_MAP['16:9'];
+      const modelId = model || AWS_DEFAULT_IMAGE_MODEL;
+      const url = await Promise.race([
+        generateAwsBedrockImage({ modelId, prompt, width, height, safeSeed }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), REQUEST_TIMEOUT_MS)),
+      ]);
+      return res.json({ url, prompt });
+    }
+
     // --- Gemini ---
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) return res.status(401).json({ error: 'AUTH_REQUIRED' });
@@ -216,8 +339,16 @@ app.post('/api/generate', async (req, res) => {
     const message = error instanceof Error ? error.message : 'GENERATION_FAILED';
     const elapsed = Date.now() - startedAt;
     console.error(`[generate] failed after ${elapsed}ms: ${message}`);
+    if (message.includes('AccessDeniedException') || message.includes('UnrecognizedClientException') || message.includes('ExpiredTokenException') || message.includes('AUTH_REQUIRED')) {
+      return res.status(401).json({ error: 'AUTH_REQUIRED' });
+    }
+    if (message.includes('marked by provider as Legacy')) {
+      return res.status(503).json({ error: 'MODEL_UNAVAILABLE' });
+    }
     if (message.includes('"code":503') || message.includes('UNAVAILABLE')) return res.status(503).json({ error: 'MODEL_UNAVAILABLE' });
-    if (message.includes('"code":429') || message.includes('RESOURCE_EXHAUSTED')) return res.status(429).json({ error: 'RATE_LIMITED' });
+    if (message.includes('"code":429') || message.includes('RESOURCE_EXHAUSTED') || message.includes('ThrottlingException') || message.includes('TooManyRequestsException')) {
+      return res.status(429).json({ error: 'RATE_LIMITED' });
+    }
     if (message === 'TIMEOUT') return res.status(504).json({ error: 'TIMEOUT' });
     return res.status(500).json({ error: 'GENERATION_FAILED' });
   } finally {

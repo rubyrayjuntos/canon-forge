@@ -56,6 +56,11 @@ const FlipbookPlayer: React.FC<FlipbookPlayerProps> = ({
             </span>
           </div>
         )}
+        {activeFrame?.sourceLabel && (
+          <div className="absolute top-3 left-3 bg-emerald-950/80 border border-emerald-600/50 rounded-lg px-2 py-1 text-[10px] font-mono text-emerald-200">
+            {activeFrame.sourceLabel}
+          </div>
+        )}
         <div className="absolute bottom-3 left-3 bg-black/60 rounded-lg px-3 py-1 text-xs font-mono text-slate-300">
           Frame {activeIndex + 1} of {frames.length} · {activeIndex * intervalSeconds}s / {totalDuration}s
         </div>
@@ -136,6 +141,11 @@ const FrameThumbnail: React.FC<{
       <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-1.5 py-0.5 text-[9px] font-mono text-slate-400">
         {index * intervalSeconds}s
       </div>
+      {frame.sourceLabel && (
+        <div className="absolute top-1 left-1 max-w-[88%] truncate bg-emerald-950/80 border border-emerald-700/60 rounded px-1 py-0.5 text-[8px] font-mono text-emerald-200">
+          {frame.sourceLabel}
+        </div>
+      )}
       {hovered && (frame.status === 'done' || frame.status === 'error') && (
         <button
           onClick={(e) => { e.stopPropagation(); onRegenerate(); }}

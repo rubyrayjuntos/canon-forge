@@ -1,10 +1,38 @@
+version: '3.8'
+
 services:
-  app:
-    build: .
+  # Stable Diffusion A1111
+  stable-diffusion:
+    image: ghcr.io/ai-dock/stable-diffusion-webui:latest-cpu
+    container_name: canon-forge-sd
     ports:
-      - "3001:3001"
+      - "7860:17860"
     environment:
-      - NODE_ENV=production
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - COMMANDLINE_ARGS=--listen --api --skip-torch-cuda-test
+    volumes:
+      - sd_models:/stable-diffusion-webui/models
+      - sd_outputs:/stable-diffusion-webui/outputs
+  # Canon Forge app
+  app:
+    build:
+      context: .
+      target: development
+    container_name: canon-forge-app
+    ports:
+      - "3000:3000"  # Vite
+      - "3001:3001"  # Node server
+    environment:
+      - LOCAL_SD_URL=http://stable-diffusion:17860
+      - VITE_LOCAL_SD_URL=http://stable-diffusion:17860
+      - VITE_USE_LOCAL_SD=true
+      - VITE_HOST=0.0.0.0
       - PORT=3001
-    restart: unless-stopped
+    volumes:
+      - .:/app
+      - /app/node_modules
+    depends_on:
+      - stable-diffusion
+
+volumes:
+  sd_models:
+  sd_outputs:

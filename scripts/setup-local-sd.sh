@@ -56,9 +56,10 @@ fi
 step "Installing system dependencies"
 
 sudo apt-get update -q
+PY_MINOR_PKG="python3.${MINOR}-venv"
 sudo apt-get install -y \
   wget git curl \
-  python3-venv python3-pip \
+  "$PY_MINOR_PKG" python3-pip \
   libgl1 libglib2.0-0 \
   libsm6 libxrender1 libxext6 \
   build-essential
@@ -138,7 +139,150 @@ cat > "$LAUNCH" << 'LAUNCHER'
 set -euo pipefail
 cd "$(dirname "$0")"
 
-export COMMANDLINE_ARGS="--api --cors-allow-origins * --xformers --no-gradio-queue"
+# Python 3.13 compat: override torch pin (A1111 default of 2.1.2 has no py313 build)
+export TORCH_COMMAND="pip install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cu128"
+# Stability-AI removed the original public repo; use a mirror pinned to the
+# same commit expected by AUTOMATIC1111.
+export STABLE_DIFFUSION_REPO="https://github.com/joypaul162/Stability-AI-stablediffusion.git"
+export STABLE_DIFFUSION_COMMIT_HASH="f16630a927e00098b524d687640719e4eb469b76"
+
+MODELS_DIR="$HOME/stable-diffusion-webui/models/Stable-diffusion"
+FALLBACK_MODEL_NAME="${CANON_FORGE_FALLBACK_MODEL_NAME:-v1-5-pruned-emaonly.safetensors}"
+FALLBACK_MODEL_URL="${CANON_FORGE_FALLBACK_MODEL_URL:-https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors}"
+FALLBACK_MODEL_SHA256="${CANON_FORGE_FALLBACK_MODEL_SHA256:-6ce0161689b3853acaa03779ec93eafe75a02f4ced659bee03f50797806fa2fa}"
+DOWNLOAD_ENABLED="${CANON_FORGE_AUTO_DOWNLOAD_MODEL:-true}"
+MIN_CKPT_BYTES=$((250 * 1024 * 1024))
+
+is_truthy() {
+  case "${1,,}" in
+    1|true|yes|y|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_valid_safetensors() {
+  local file="$1"
+  python3 - "$file" <<'PY'
+import json
+import os
+import struct
+import sys
+
+path = sys.argv[1]
+
+try:
+    size = os.path.getsize(path)
+    if size < 16:
+        raise ValueError("file too small")
+
+    with open(path, "rb") as f:
+        raw = f.read(8)
+        if len(raw) != 8:
+            raise ValueError("failed to read header length")
+        header_len = struct.unpack("<Q", raw)[0]
+        if header_len <= 2 or header_len > size - 8:
+            raise ValueError("invalid header length")
+        header = json.loads(f.read(header_len))
+
+    data_size = size - 8 - header_len
+    tensor_count = 0
+    for key, value in header.items():
+        if key == "__metadata__":
+            continue
+        if not isinstance(value, dict):
+            raise ValueError("tensor metadata is not an object")
+        offsets = value.get("data_offsets")
+        if not isinstance(offsets, list) or len(offsets) != 2:
+            raise ValueError("missing data_offsets")
+        begin, end = offsets
+        if not isinstance(begin, int) or not isinstance(end, int):
+            raise ValueError("non-integer data_offsets")
+        if begin < 0 or end < 0 or begin > end or end > data_size:
+            raise ValueError("data_offsets outside file bounds")
+        tensor_count += 1
+
+    if tensor_count == 0:
+        raise ValueError("no tensors found")
+except Exception:
+    sys.exit(1)
+PY
+}
+
+quarantine_bad_model() {
+  local file="$1"
+  local bad="${file}.corrupt-$(date +%Y%m%d-%H%M%S)"
+  echo "[model] Invalid checkpoint: $(basename "$file")"
+  echo "[model] Moving to: $bad"
+  mv -f "$file" "$bad"
+}
+
+ensure_valid_model() {
+  mkdir -p "$MODELS_DIR"
+
+  local valid_found=0
+  shopt -s nullglob
+  local checkpoints=("$MODELS_DIR"/*.safetensors "$MODELS_DIR"/*.ckpt)
+  shopt -u nullglob
+
+  for model in "${checkpoints[@]}"; do
+    if [[ "$model" == *.safetensors ]]; then
+      if is_valid_safetensors "$model"; then
+        valid_found=1
+      else
+        quarantine_bad_model "$model"
+      fi
+    else
+      local size
+      size=$(stat -c%s "$model" 2>/dev/null || echo 0)
+      if (( size >= MIN_CKPT_BYTES )); then
+        valid_found=1
+      else
+        quarantine_bad_model "$model"
+      fi
+    fi
+  done
+
+  if (( valid_found == 1 )); then
+    return 0
+  fi
+
+  if ! is_truthy "$DOWNLOAD_ENABLED"; then
+    echo "[model] No valid checkpoint found and auto-download is disabled."
+    echo "[model] Set CANON_FORGE_AUTO_DOWNLOAD_MODEL=true to enable fallback download."
+    return 1
+  fi
+
+  local target="$MODELS_DIR/$FALLBACK_MODEL_NAME"
+  local tmp="${target}.part"
+
+  echo "[model] No valid checkpoint found. Downloading fallback model:"
+  echo "        $FALLBACK_MODEL_NAME"
+  curl -fL --retry 8 --retry-delay 3 --retry-all-errors -C - -o "$tmp" "$FALLBACK_MODEL_URL"
+  mv -f "$tmp" "$target"
+
+  if [[ -n "$FALLBACK_MODEL_SHA256" ]]; then
+    local actual_sha
+    actual_sha=$(sha256sum "$target" | awk '{print $1}')
+    if [[ "$actual_sha" != "$FALLBACK_MODEL_SHA256" ]]; then
+      echo "[model] SHA256 mismatch for $target"
+      echo "[model] expected: $FALLBACK_MODEL_SHA256"
+      echo "[model] actual  : $actual_sha"
+      return 1
+    fi
+  fi
+
+  if ! is_valid_safetensors "$target"; then
+    echo "[model] Downloaded file did not pass safetensors validation: $target"
+    return 1
+  fi
+
+  echo "[model] Fallback model ready: $target"
+}
+
+ensure_valid_model
+
+# Keep install checks enabled so missing runtime deps are installed.
+export COMMANDLINE_ARGS="--api --cors-allow-origins * --xformers --no-gradio-queue --skip-python-version-check --medvram --disable-nan-check"
 bash webui.sh
 LAUNCHER
 

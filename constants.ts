@@ -24,6 +24,10 @@ export const CHARACTER_TEMPLATES: Record<ReferenceType, string> = TEST_MODE
       HEADSHOT: 'Close-up headshot, neutral background.',
       BODY_REVERSE: 'Full body front view, simple background.',
       BODY_NUDE: 'Full body figure reference, front and 3/4 view, standing naturally, studio lighting.',
+      BODY_NUDE_FRONT: 'Full body figure reference, front view only, standing naturally, neutral studio lighting.',
+      BODY_NUDE_THREE_QUARTER: 'Full body figure reference, three-quarter view only, standing naturally, neutral studio lighting.',
+      BODY_NUDE_PROFILE: 'Full body figure reference, strict profile side view only, standing naturally, neutral studio lighting.',
+      BODY_NUDE_BACK: 'Full body figure reference, back view only, standing naturally, neutral studio lighting.',
       WARDROBE: 'Full body with clothing, urban setting.',
       ACTION: 'Action pose, dynamic.',
       EXPRESSION: 'Face showing emotion.',
@@ -34,6 +38,14 @@ export const CHARACTER_TEMPLATES: Record<ReferenceType, string> = TEST_MODE
         'Extreme close-up cinematic headshot, neutral expression, microscopic skin texture and iris detail, neutral studio background, soft key lighting, character focus.',
       BODY_NUDE:
         'Full body figure reference. Front view and 3/4 profile view side-by-side. The character is standing naturally, unclothed, in a neutral studio. Accurate human proportions, musculature, and skin detail. Studio lighting — soft key light, fill shadow, specular highlights on skin. Clean background. Character design reference sheet.',
+      BODY_NUDE_FRONT:
+        'Full body nude figure reference, front view only. Character stands naturally with arms relaxed. Neutral studio environment. Accurate anatomy, realistic skin texture, and clean silhouette from head to toe. Soft key plus controlled fill and subtle skin specular highlights. Output format constraint: single image, single subject, single camera view only. Do not create diptych/triptych, split panels, contact sheets, or side-by-side comparisons. No duplicate subject instances in one frame.',
+      BODY_NUDE_THREE_QUARTER:
+        'Full body nude figure reference, three-quarter angle only (about 45 degrees). Character stands naturally, preserving torso twist and hip alignment. Neutral studio background, realistic proportions, muscular and skeletal readability, clean head-to-toe framing. Output format constraint: single image, single subject, single camera view only. Do not create diptych/triptych, split panels, contact sheets, or side-by-side comparisons. No duplicate subject instances in one frame.',
+      BODY_NUDE_PROFILE:
+        'Full body nude figure reference, strict side profile only. Character stands naturally with neutral posture. Emphasize side silhouette accuracy: cranial angle, neck line, chest depth, abdominal contour, glute projection, knee alignment, and ankle/foot profile. Output format constraint: single image, single subject, single camera view only. Do not create diptych/triptych, split panels, contact sheets, or side-by-side comparisons. No duplicate subject instances in one frame.',
+      BODY_NUDE_BACK:
+        'Full body nude figure reference, back view only. Character stands naturally with relaxed arms. Emphasize posterior anatomy and silhouette: trapezius, lat spread, spinal line, glute contour, hamstrings, calf structure, and heel/foot alignment. Neutral studio background, clinical fidelity. Output format constraint: single image, single subject, single camera view only. Do not create diptych/triptych, split panels, contact sheets, or side-by-side comparisons. No duplicate subject instances in one frame.',
       BODY_REVERSE:
         'Full body anatomical character reference sheet showing 3 distinct poses side-by-side: Front view, 3/4 profile view, and strict Profile view. The character is wearing character-appropriate minimal athletic briefs to clearly define musculature, skeletal structure, and defining physical traits. Clinical but cinematic lighting, clean simple studio background, high-detail skin rendering.',
       WARDROBE:
@@ -87,4 +99,12 @@ export const INITIAL_SET_PROFILE = {
   ambiance: '',
   style: '',
   details: '',
+  spatialInvariants:
+    'Primary room proportions and circulation remain fixed across all renders.',
+  fixedLandmarks:
+    'Landmarks locked: main entry, primary focal structure, key window or opening, central floor anchor.',
+  forbiddenChanges:
+    'Do not relocate major structures, invert layout, or replace core architectural features.',
+  lightingRigLock:
+    'Key light from camera-left at 45 degrees, soft fill at low ratio, subtle rim separation, controlled haze.',
 };

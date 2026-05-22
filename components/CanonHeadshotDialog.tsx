@@ -6,7 +6,6 @@ import { AESTHETIC_PROMPT_CORE } from '../constants';
 interface CanonHeadshotDialogProps {
   isOpen: boolean;
   profile: CharacterProfile;
-  fastRender: boolean;
   providerConfig: ProviderConfig;
   onApprove: (canonUrl: string) => void;
   onSkip: () => void;
@@ -46,7 +45,7 @@ async function downscaleImage(file: File): Promise<{ b64: string; mimeType: stri
 }
 
 const CanonHeadshotDialog: React.FC<CanonHeadshotDialogProps> = ({
-  isOpen, profile, fastRender, providerConfig, onApprove, onSkip,
+  isOpen, profile, providerConfig, onApprove, onSkip,
 }) => {
   const [state, setState] = useState<DialogState>('upload');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -100,8 +99,7 @@ const CanonHeadshotDialog: React.FC<CanonHeadshotDialogProps> = ({
         prompt,
         seed: profile.seed,
         aspectRatio: '1:1',
-        fastRender,
-        provider: providerConfig.provider,
+        provider: providerConfig.provider === 'local-llm' ? 'local-sd' : providerConfig.provider,
         model: providerConfig.model,
       };
       if (providerConfig.provider !== 'venice') {

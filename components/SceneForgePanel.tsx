@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { CharacterProfile, SetProfile, Keyframe, KeyframeScene } from '../types';
+import { CharacterProfile, SetProfile, Keyframe, KeyframeScene, SceneSeedStill } from '../types';
 import { ProviderConfig } from '../services/geminiService';
 import { buildKeyframePrompt, generateKeyframeSequence, computeFrameCount } from '../services/keyframeService';
 import FlipbookPlayer from './FlipbookPlayer';
@@ -10,6 +10,8 @@ interface SceneForgePanelProps {
   setProfile: SetProfile;
   savedSets: SetProfile[];
   providerConfig: ProviderConfig;
+  seedStills?: SceneSeedStill[];
+  onConsumeSeedStills?: () => void;
 }
 
 const generateId = () => Math.random().toString(36).substring(2, 15);
@@ -20,6 +22,8 @@ const SceneForgePanel: React.FC<SceneForgePanelProps> = ({
   setProfile,
   savedSets,
   providerConfig,
+  seedStills = [],
+  onConsumeSeedStills,
 }) => {
   const allChars = useMemo(
     () => [charProfile, ...savedChars.filter((c) => c.id !== charProfile.id)],
@@ -65,6 +69,58 @@ const SceneForgePanel: React.FC<SceneForgePanelProps> = ({
     );
   }, [activeScene]);
 
+  // Build an initial timeline from compositor stills when they are handed off.
+  useEffect(() => {
+    if (!seedStills.length) return;
+
+    const sorted = [...seedStills].sort((a, b) => a.timestamp - b.timestamp);
+    const interval = 6;
+    const frames: Keyframe[] = sorted.map((still, i) => ({
+      id: still.id,
+      frameIndex: i,
+      timestampSeconds: i * interval,
+      url: still.url,
+      promptUsed: still.promptUsed,
+      sourceLabel: `Compositor: ${still.compositorSpec.shotType} / ${still.compositorSpec.cameraAngle} / ${still.compositorSpec.lensPreset}`,
+      status: 'done',
+    }));
+
+    const beats = sorted.map(
+      (still) => `${still.compositorSpec.shotType} | ${still.compositorSpec.cameraAngle} | ${still.compositorSpec.emotionTone}`
+    );
+
+    const actionSummary = sorted
+      .map((still) => still.compositorSpec.action)
+      .filter(Boolean)
+      .join(' -> ');
+
+    const seededScene: KeyframeScene = {
+      id: generateId(),
+      characterId: charProfile.id,
+      setId: setProfile.id,
+      characterName: charProfile.name,
+      setName: setProfile.name,
+      sceneAction: actionSummary || sceneAction || 'Action timeline imported from Compositor',
+      totalDuration: Math.max(12, sorted.length * interval),
+      intervalSeconds: interval,
+      mode: 'manual',
+      manualBeats: beats,
+      frames,
+      createdAt: Date.now(),
+    };
+
+    setSelectedCharId(charProfile.id);
+    setSelectedSetId(setProfile.id);
+    setSceneAction(seededScene.sceneAction);
+    setTotalDuration(seededScene.totalDuration);
+    setIntervalSeconds(seededScene.intervalSeconds);
+    setMode('manual');
+    setManualBeats(beats);
+    setActiveScene(seededScene);
+    setSceneHistory((prev) => [seededScene, ...prev.filter((s) => s.id !== seededScene.id)]);
+    onConsumeSeedStills?.();
+  }, [seedStills, charProfile, setProfile]);
+
   const handleFrameUpdate = useCallback((frameIndex: number, update: Partial<Keyframe>) => {
     setActiveScene((prev) => {
       if (!prev) return prev;
@@ -97,8 +153,7 @@ const SceneForgePanel: React.FC<SceneForgePanelProps> = ({
           prompt,
           seed: char.seed,
           aspectRatio: '16:9',
-          fastRender: true,
-          provider: providerConfig.provider,
+          provider: providerConfig.provider === 'local-llm' ? 'local-sd' : providerConfig.provider,
           model: providerConfig.model,
           referenceImage: char.canonHeadshotUrl,
         }),
@@ -272,6 +327,14 @@ const SceneForgePanel: React.FC<SceneForgePanelProps> = ({
       {/* Flipbook Player */}
       {activeScene && (
         <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-6 shadow-xl">
+          {activeScene.frames.some((f) => f.sourceLabel?.startsWith('Compositor:')) && (
+            <div className="mb-4 rounded-xl border border-emerald-600/40 bg-emerald-950/30 px-4 py-3 text-xs text-emerald-200 flex items-center gap-2">
+              <i className="fas fa-link text-emerald-300"></i>
+              <span>
+                Imported from Compositor: {activeScene.frames.filter((f) => f.sourceLabel?.startsWith('Compositor:')).length} seeded keyframes with preserved shot contract.
+              </span>
+            </div>
+          )}
           <p className="text-[10px] text-indigo-400 font-mono tracking-widest uppercase mb-4">
             Scene Preview — {activeScene.characterName} · {activeScene.sceneAction}
           </p>

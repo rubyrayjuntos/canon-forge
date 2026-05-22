@@ -1,5 +1,16 @@
 
-export type ReferenceType = 'HEADSHOT' | 'BODY_REVERSE' | 'BODY_NUDE' | 'WARDROBE' | 'ACTION' | 'EXPRESSION' | 'NEUTRAL_SHEET';
+export type ReferenceType =
+  | 'HEADSHOT'
+  | 'BODY_REVERSE'
+  | 'BODY_NUDE'
+  | 'BODY_NUDE_FRONT'
+  | 'BODY_NUDE_THREE_QUARTER'
+  | 'BODY_NUDE_PROFILE'
+  | 'BODY_NUDE_BACK'
+  | 'WARDROBE'
+  | 'ACTION'
+  | 'EXPRESSION'
+  | 'NEUTRAL_SHEET';
 export type SetReferenceType = 'WIDE' | 'MEDIUM' | 'POV' | 'DETAIL' | 'PLAN' | 'LIGHTING';
 export type AppTab = 'CharacterForge' | 'SetForge' | 'CompositorForge' | 'SceneForge';
 export type ToastType = 'success' | 'error' | 'info';
@@ -34,6 +45,10 @@ export interface SetProfile {
   ambiance: string;
   style: string;
   details: string;
+  spatialInvariants: string;
+  fixedLandmarks: string;
+  forbiddenChanges: string;
+  lightingRigLock: string;
 }
 
 export interface CompositeConfig {
@@ -42,6 +57,22 @@ export interface CompositeConfig {
   action: string;
   extraActors: string;
   compositionStyle: string;
+  shotType: 'master' | 'medium' | 'close' | 'insert';
+  cameraAngle: 'eye_level' | 'low_angle' | 'high_angle' | 'dutch';
+  lensPreset: '24mm' | '35mm' | '50mm' | '85mm';
+  subjectDistance: 'wide' | 'medium' | 'tight';
+  emotionTone: string;
+  landmarkLock: string;
+}
+
+export interface CompositorShotSpec {
+  shotType: CompositeConfig['shotType'];
+  cameraAngle: CompositeConfig['cameraAngle'];
+  lensPreset: CompositeConfig['lensPreset'];
+  subjectDistance: CompositeConfig['subjectDistance'];
+  emotionTone: string;
+  landmarkLock: string;
+  action: string;
 }
 
 export interface ReferenceImage {
@@ -50,6 +81,17 @@ export interface ReferenceImage {
   url: string;
   promptUsed: string;
   timestamp: number;
+  status?: 'pending' | 'done' | 'error';
+  error?: string;
+  compositorSpec?: CompositorShotSpec;
+}
+
+export interface SceneSeedStill {
+  id: string;
+  url: string;
+  promptUsed: string;
+  timestamp: number;
+  compositorSpec: CompositorShotSpec;
 }
 
 export interface VideoClip {
@@ -73,6 +115,7 @@ export interface Keyframe {
   timestampSeconds: number;  // e.g. 0, 8, 16, 24, 32
   url: string;
   promptUsed: string;
+  sourceLabel?: string;
   status: 'pending' | 'generating' | 'done' | 'error';
 }
 

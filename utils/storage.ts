@@ -1,5 +1,7 @@
 import { CharacterProfile, SetProfile } from '../types';
 
+const PERSONAL_STARTER_KEY = 'personal_starter_char';
+
 /**
  * Safely loads data from localStorage with error handling
  * @param key - The localStorage key to read from
@@ -65,4 +67,21 @@ export function saveCharacters(characters: CharacterProfile[]): boolean {
  */
 export function saveSets(sets: SetProfile[]): boolean {
   return saveToStorage('saved_sets', sets);
+}
+
+/**
+ * Loads the saved personal starter character profile
+ * @returns The personal starter profile or null when not configured
+ */
+export function loadPersonalStarter(): CharacterProfile | null {
+  return loadFromStorage<CharacterProfile | null>(PERSONAL_STARTER_KEY, null);
+}
+
+/**
+ * Saves a personal starter character profile
+ * @param profile - Character profile used as one-click starter
+ * @returns true if save was successful, false otherwise
+ */
+export function savePersonalStarter(profile: CharacterProfile): boolean {
+  return saveToStorage(PERSONAL_STARTER_KEY, profile);
 }

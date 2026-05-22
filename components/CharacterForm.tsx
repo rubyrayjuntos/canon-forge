@@ -6,9 +6,15 @@ interface CharacterFormProps {
   profile: CharacterProfile;
   setProfile: (profile: CharacterProfile) => void;
   onRandomize: () => void;
+  onLoadPersonalStarter?: () => void;
 }
 
-const CharacterForm: React.FC<CharacterFormProps> = ({ profile, setProfile, onRandomize }) => {
+const CharacterForm: React.FC<CharacterFormProps> = ({
+  profile,
+  setProfile,
+  onRandomize,
+  onLoadPersonalStarter,
+}) => {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     if (name === 'undergarmentType') {
@@ -18,8 +24,8 @@ const CharacterForm: React.FC<CharacterFormProps> = ({ profile, setProfile, onRa
         setProfile({
           ...profile,
           undergarmentType: value,
-          undergarmentFit: profile.undergarmentFit || 'String',
-          undergarmentStyle: profile.undergarmentStyle || 'Transparent',
+          undergarmentFit: profile.undergarmentFit || 'Standard',
+          undergarmentStyle: profile.undergarmentStyle || 'Neutral',
         });
       }
       return;
@@ -54,12 +60,22 @@ const CharacterForm: React.FC<CharacterFormProps> = ({ profile, setProfile, onRa
       )}
       <div className="flex justify-between items-center mb-2">
         <label className={labelClass}>Gender Identity</label>
-        <button 
-          onClick={(e) => { e.preventDefault(); onRandomize(); }}
-          className="text-[10px] bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-400 border border-indigo-500/30 px-3 py-1 rounded-full flex items-center gap-1 transition-all active:scale-95"
-        >
-          <i className="fas fa-dice"></i> Randomize Remaining
-        </button>
+        <div className="flex items-center gap-2">
+          {onLoadPersonalStarter && (
+            <button
+              onClick={(e) => { e.preventDefault(); onLoadPersonalStarter(); }}
+              className="text-[10px] bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/30 px-3 py-1 rounded-full flex items-center gap-1 transition-all active:scale-95"
+            >
+              <i className="fas fa-user-check"></i> Load Personal Starter
+            </button>
+          )}
+          <button
+            onClick={(e) => { e.preventDefault(); onRandomize(); }}
+            className="text-[10px] bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-400 border border-indigo-500/30 px-3 py-1 rounded-full flex items-center gap-1 transition-all active:scale-95"
+          >
+            <i className="fas fa-dice"></i> Randomize Remaining
+          </button>
+        </div>
       </div>
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -132,7 +148,7 @@ const CharacterForm: React.FC<CharacterFormProps> = ({ profile, setProfile, onRa
               onChange={handleChange}
               className={inputClass}
             >
-              <option value="Nude">None (Life Drawing)</option>
+              <option value="None">None (Life Drawing)</option>
               <option value="Minimal briefs">Minimal briefs</option>
               <option value="Boxer briefs">Boxer briefs</option>
               <option value="Boxers">Boxers</option>
