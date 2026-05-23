@@ -17,6 +17,8 @@ import {
   generateCharacterImage as generateGeminiCharacterImage,
   generateSetImage as generateGeminiSetImage,
   generateCompositeImage as generateGeminiCompositeImage,
+  buildCharacterPrompt,
+  buildSetPrompt,
   setProviderConfig,
   ProviderConfig,
 } from './services/geminiService';
@@ -37,6 +39,7 @@ import {
 } from './utils/storage';
 import { useClipboard } from './hooks/useClipboard';
 import CanonHeadshotDialog from './components/CanonHeadshotDialog';
+import AwsAuthDialog from './components/AwsAuthDialog';
 
 // --- Helper Functions ---
 const generateId = (): string => Math.random().toString(36).substring(2, 15);
@@ -210,6 +213,7 @@ interface ReferenceGalleryProps {
   onGenerate: (type: string) => void;
   onDelete: (id: string) => void;
   onRetry: (image: ReferenceImage) => void;
+  onCopyPrompt: (type: string) => void;
   disableGenerate: boolean;
   activeCount: number;
   types: Array<{ type: string; label: string; icon: string }>;
@@ -220,6 +224,7 @@ const ReferenceGallery: React.FC<ReferenceGalleryProps> = ({
   onGenerate,
   onDelete,
   onRetry,
+  onCopyPrompt,
   disableGenerate,
   activeCount,
   types,
@@ -269,15 +274,23 @@ const ReferenceGallery: React.FC<ReferenceGalleryProps> = ({
       )}
       <div className="flex flex-wrap gap-3 items-center">
         {types.map((t) => (
-          <button
-            key={t.type}
-            onClick={() => onGenerate(t.type)}
-            disabled={disableGenerate}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-indigo-500/30 text-xs font-medium transition-all hover:bg-indigo-600/20 hover:border-indigo-500 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <i className={`fas ${t.icon} text-indigo-400`}></i>
-            {t.label}
-          </button>
+          <div key={t.type} className="flex items-center">
+            <button
+              onClick={() => onGenerate(t.type)}
+              disabled={disableGenerate}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-l-full border border-indigo-500/30 text-xs font-medium transition-all hover:bg-indigo-600/20 hover:border-indigo-500 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed border-r-0"
+            >
+              <i className={`fas ${t.icon} text-indigo-400`}></i>
+              {t.label}
+            </button>
+            <button
+              onClick={() => onCopyPrompt(t.type)}
+              className="px-2 py-1.5 rounded-r-full border border-indigo-500/30 text-[10px] text-slate-400 hover:text-white hover:bg-indigo-600/20 hover:border-indigo-500 transition-all border-l-0"
+              title="Copy prompt text"
+            >
+              <i className="fas fa-copy"></i>
+            </button>
+          </div>
         ))}
         <span className={`text-[10px] uppercase tracking-widest font-mono ${disableGenerate ? 'text-amber-400' : 'text-slate-500'}`}>
           Renders: {activeCount}/{MAX_CONCURRENT_IMAGE_RENDERS}
@@ -438,6 +451,11 @@ const App: React.FC = () => {
     emotionTone: 'quiet resolve and focused anticipation',
     landmarkLock: 'Preserve established set landmarks and spacing from SetForge.',
   });
+  const [awsCredentials, setAwsCredentials] = useState<{ accessKeyId: string; secretAccessKey: string; sessionToken?: string } | null>(() => {
+    const saved = localStorage.getItem('canon_aws_auth');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [isAwsDialogOpen, setIsAwsDialogOpen] = useState(false);
 
   const [charRefs, setCharRefs] = useState<ReferenceImage[]>([]);
   const [setRefs, setSetRefs] = useState<ReferenceImage[]>([]);
@@ -459,6 +477,12 @@ const App: React.FC = () => {
       setAvailableModels(data);
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (providerConfig.provider === 'aws' && !awsCredentials) {
+      setIsAwsDialogOpen(true);
+    }
+  }, [providerConfig.provider, awsCredentials]);
 
   useEffect(() => {
     const checkLocalSd = () => {
@@ -577,6 +601,11 @@ const App: React.FC = () => {
       return Promise.resolve({ success: false });
     }
 
+    if (providerConfig.provider === 'aws' && !awsCredentials) {
+      setIsAwsDialogOpen(true);
+      return Promise.resolve({ success: false });
+    }
+
     if (skipHeadshotDialog) {
       skipDialogRef.current = true;
     }
@@ -631,14 +660,12 @@ const App: React.FC = () => {
       void (async () => {
         let success = false;
       try {
-        let result;
-        if (forgeType === 'CharacterForge') {
-          result = await generateGeminiCharacterImage(charProfile, type as ReferenceType);
-        } else if (forgeType === 'SetForge') {
-          result = await generateGeminiSetImage(setProfile, type as SetReferenceType);
-        } else {
-          result = await generateGeminiCompositeImage(charProfile, setProfile, compConfig);
-        }
+        const result =
+          forgeType === 'CharacterForge'
+            ? await generateGeminiCharacterImage(charProfile, type as ReferenceType, awsCredentials)
+            : forgeType === 'SetForge'
+              ? await generateGeminiSetImage(setProfile, type as SetReferenceType, awsCredentials)
+              : await generateGeminiCompositeImage(charProfile, setProfile, compConfig, awsCredentials);
 
         updateRef({
           url: result.url,
@@ -804,6 +831,135 @@ const App: React.FC = () => {
     } finally {
       setIsVideoGenerating(false);
     }
+  };
+
+  const handleLlmGen = async () => {
+    setGenState({ isGenerating: true, statusMessage: 'Consulting local oracle...' });
+    try {
+      const prompt = `Generate a unique character profile for an "Urban Spiritual Realism" setting. 
+      Return only a JSON object with the following fields: 
+      name, age, gender (Male/Female/Non-binary/Androgynous), build, eyes, hair, skinTone, distinctiveFeatures, wardrobe, personality, backstory.
+      Make it gritty, cinematic, and detailed.`;
+      
+      const res = await fetch('/api/generate-text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt }),
+      });
+      
+      if (!res.ok) throw new Error('LLM_ERROR');
+      const data = await res.json();
+      
+      const cleanJson = data.text.match(/\{[\s\S]*\}/)?.[0] || data.text;
+      const profile = JSON.parse(cleanJson);
+      
+      setCharProfile(prev => ({
+        ...prev,
+        ...profile,
+        id: generateId(),
+        seed: generateSeed()
+      }));
+      setCharRefs([]);
+      setToastState({ message: 'Character forged by local LLM.', type: 'success', visible: true });
+    } catch (e: any) {
+      console.error('LLM Gen failed:', e);
+      setToastState({ message: 'LLM generation failed. falling back to randomized presets.', type: 'info', visible: true });
+      onRandomizeChar();
+    } finally {
+      setGenState({ isGenerating: false, statusMessage: '' });
+    }
+  };
+
+  const onRandomizeChar = () => {
+    const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
+    const undergarmentType = pick([
+      'Minimal briefs',
+      'Boxer briefs',
+      'Compression shorts',
+      'Sports bra + briefs',
+      'None',
+    ]);
+    const undergarmentFit =
+      undergarmentType === 'None' ? '' : pick(['Standard', 'Tight', 'High-waist', 'Low-rise']);
+    const undergarmentStyle =
+      undergarmentType === 'None'
+        ? ''
+        : pick(['Matte black', 'Charcoal grey', 'Skin-tone', 'Neutral']);
+    const names = ['Adrian Vale', 'Micah Stone', 'Rian Calder', 'Noah Archer', 'Elias Ward'];
+    const builds = [
+      'Lean athletic frame with visible shoulder definition',
+      'Compact muscular build with narrow waist',
+      'Broad-shouldered endurance build',
+      'Wiry dancer-like frame with long limbs',
+    ];
+    const eyes = [
+      'hazel with amber flecks',
+      'dark brown with high contrast limbal ring',
+      'steel gray with low-saturation iris texture',
+      'green-brown heterochromia hint',
+    ];
+    const hair = [
+      'short fade with textured top and natural crown swirl',
+      'tight side fade with braided top section',
+      'close crop with receding temple line',
+      'undercut with soft wave and natural flyaways',
+    ];
+    const skinTones = [
+      'warm medium-brown with olive undertone',
+      'deep brown with cool undertone and subtle shoulder freckles',
+      'light tan with neutral undertone and visible pore texture',
+      'rich bronze with warm undertone and natural tonal variation',
+    ];
+    const distinctiveFeatures = [
+      'slight nose bridge asymmetry, pronounced jaw angle, faint left-cheek scar',
+      'strong brow ridge, rounded chin dimple, subtle neck tendon definition',
+      'high cheekbones, narrow nose tip, minor asymmetry in ear projection',
+      'defined clavicles, soft smile line at right mouth corner, subtle eyebrow notch',
+    ];
+    const wardrobes = [
+      'weathered bomber jacket, ribbed black tee, tapered cargo trousers, worn leather boots',
+      'matte charcoal overcoat, raw denim, fitted thermal shirt, steel-toe lace boots',
+      'cropped utility jacket, draped slate hoodie, technical joggers, combat trainers',
+      'faded indigo work shirt, dark canvas pants, layered necklaces, scuffed high-top boots',
+    ];
+    const personalityLines = [
+      'Quietly vigilant, thoughtful before speaking, radiates controlled intensity.',
+      'Grounded and compassionate, keeps emotions private, moves with deliberate calm.',
+      'Disciplined and observant, resilient under pressure, carries protective energy.',
+      'Reserved but warm, strategic thinker, unwavering focus in chaotic spaces.',
+    ];
+    const backstories = [
+      'Raised between concrete neighborhoods and community temples; learned to balance grit with ritual calm.',
+      'Former street medic turned night-shift guardian, carrying quiet responsibility for others.',
+      'Ex-warehouse mechanic who now navigates city rooftops, reading people before danger unfolds.',
+      'Grew up in transit districts, shaped by late-night work, rain-soaked alleys, and disciplined self-study.',
+    ];
+    setCharProfile({
+      ...charProfile,
+      seed: generateSeed(),
+      name: pick(names),
+      age: pick(['24', '27', '31', '36', '41']),
+      build: pick(builds),
+      eyes: pick(eyes),
+      hair: pick(hair),
+      skinTone: pick(skinTones),
+      distinctiveFeatures: pick(distinctiveFeatures),
+      wardrobe: pick(wardrobes),
+      personality: pick(personalityLines),
+      backstory: pick(backstories),
+      aesthetic: 'Urban spiritual realism with grounded cinematic realism',
+      undergarmentType,
+      undergarmentFit,
+      undergarmentStyle,
+    });
+    setCharRefs([]);
+  };
+
+  const handleCopyPrompt = (type: string, context: 'CharacterForge' | 'SetForge') => {
+    const prompt = context === 'CharacterForge' 
+      ? buildCharacterPrompt(charProfile, type as any)
+      : buildSetPrompt(setProfile, type as any);
+    handleCopyToClipboard(prompt);
   };
 
   const randomizeSet = () => {
@@ -1008,90 +1164,8 @@ const App: React.FC = () => {
                     visible: true,
                   });
                 }}
-                onRandomize={() => {
-                  const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
-                  const undergarmentType = pick([
-                    'Minimal briefs',
-                    'Boxer briefs',
-                    'Compression shorts',
-                    'Sports bra + briefs',
-                    'None',
-                  ]);
-                  const undergarmentFit =
-                    undergarmentType === 'None' ? '' : pick(['Standard', 'Tight', 'High-waist', 'Low-rise']);
-                  const undergarmentStyle =
-                    undergarmentType === 'None'
-                      ? ''
-                      : pick(['Matte black', 'Charcoal grey', 'Skin-tone', 'Neutral']);
-                  const names = ['Adrian Vale', 'Micah Stone', 'Rian Calder', 'Noah Archer', 'Elias Ward'];
-                  const builds = [
-                    'Lean athletic frame with visible shoulder definition',
-                    'Compact muscular build with narrow waist',
-                    'Broad-shouldered endurance build',
-                    'Wiry dancer-like frame with long limbs',
-                  ];
-                  const eyes = [
-                    'hazel with amber flecks',
-                    'dark brown with high contrast limbal ring',
-                    'steel gray with low-saturation iris texture',
-                    'green-brown heterochromia hint',
-                  ];
-                  const hair = [
-                    'short fade with textured top and natural crown swirl',
-                    'tight side fade with braided top section',
-                    'close crop with receding temple line',
-                    'undercut with soft wave and natural flyaways',
-                  ];
-                  const skinTones = [
-                    'warm medium-brown with olive undertone',
-                    'deep brown with cool undertone and subtle shoulder freckles',
-                    'light tan with neutral undertone and visible pore texture',
-                    'rich bronze with warm undertone and natural tonal variation',
-                  ];
-                  const distinctiveFeatures = [
-                    'slight nose bridge asymmetry, pronounced jaw angle, faint left-cheek scar',
-                    'strong brow ridge, rounded chin dimple, subtle neck tendon definition',
-                    'high cheekbones, narrow nose tip, minor asymmetry in ear projection',
-                    'defined clavicles, soft smile line at right mouth corner, subtle eyebrow notch',
-                  ];
-                  const wardrobes = [
-                    'weathered bomber jacket, ribbed black tee, tapered cargo trousers, worn leather boots',
-                    'matte charcoal overcoat, raw denim, fitted thermal shirt, steel-toe lace boots',
-                    'cropped utility jacket, draped slate hoodie, technical joggers, combat trainers',
-                    'faded indigo work shirt, dark canvas pants, layered necklaces, scuffed high-top boots',
-                  ];
-                  const personalityLines = [
-                    'Quietly vigilant, thoughtful before speaking, radiates controlled intensity.',
-                    'Grounded and compassionate, keeps emotions private, moves with deliberate calm.',
-                    'Disciplined and observant, resilient under pressure, carries protective energy.',
-                    'Reserved but warm, strategic thinker, unwavering focus in chaotic spaces.',
-                  ];
-                  const backstories = [
-                    'Raised between concrete neighborhoods and community temples; learned to balance grit with ritual calm.',
-                    'Former street medic turned night-shift guardian, carrying quiet responsibility for others.',
-                    'Ex-warehouse mechanic who now navigates city rooftops, reading people before danger unfolds.',
-                    'Grew up in transit districts, shaped by late-night work, rain-soaked alleys, and disciplined self-study.',
-                  ];
-                  setCharProfile({
-                    ...charProfile,
-                    seed: generateSeed(),
-                    name: pick(names),
-                    age: pick(['24', '27', '31', '36', '41']),
-                    build: pick(builds),
-                    eyes: pick(eyes),
-                    hair: pick(hair),
-                    skinTone: pick(skinTones),
-                    distinctiveFeatures: pick(distinctiveFeatures),
-                    wardrobe: pick(wardrobes),
-                    personality: pick(personalityLines),
-                    backstory: pick(backstories),
-                    aesthetic: 'Urban spiritual realism with grounded cinematic realism',
-                    undergarmentType,
-                    undergarmentFit,
-                    undergarmentStyle,
-                  });
-                  setCharRefs([]);
-                }}
+                onRandomize={onRandomizeChar}
+                onGenerateLLM={handleLlmGen}
               />
             </div>
             <div className="lg:col-span-8 space-y-6">
@@ -1160,11 +1234,12 @@ const App: React.FC = () => {
                 </div>
               )}
 
-              <ReferenceGallery
+               <ReferenceGallery
                 images={charRefs}
                 onGenerate={(t: any) => handleGen(t, 'CharacterForge')}
                 onDelete={(id) => handleDeleteRef('CharacterForge', id)}
                 onRetry={(img) => handleRetryRef('CharacterForge', img)}
+                onCopyPrompt={(t) => handleCopyPrompt(t, 'CharacterForge')}
                 disableGenerate={activeImageRenders >= MAX_CONCURRENT_IMAGE_RENDERS}
                 activeCount={activeImageRenders}
                 types={[
@@ -1299,11 +1374,12 @@ const App: React.FC = () => {
                   <i className="fas fa-layer-group mr-1"></i> Run Set Canon Pack
                 </button>
               </div>
-              <ReferenceGallery
+               <ReferenceGallery
                 images={setRefs}
                 onGenerate={(t: any) => handleGen(t, 'SetForge')}
                 onDelete={(id) => handleDeleteRef('SetForge', id)}
                 onRetry={(img) => handleRetryRef('SetForge', img)}
+                onCopyPrompt={(t) => handleCopyPrompt(t, 'SetForge')}
                 disableGenerate={activeImageRenders >= MAX_CONCURRENT_IMAGE_RENDERS}
                 activeCount={activeImageRenders}
                 types={[
@@ -1610,6 +1686,15 @@ const App: React.FC = () => {
             />
           </div>
         )}
+        <AwsAuthDialog
+          isOpen={isAwsDialogOpen}
+          onClose={() => setIsAwsDialogOpen(false)}
+          onSave={(creds) => {
+            setAwsCredentials(creds);
+            localStorage.setItem('canon_aws_auth', JSON.stringify(creds));
+            setToastState({ message: 'AWS session initiated locally.', type: 'success', visible: true });
+          }}
+        />
       </main>
 
       {genState.error && (

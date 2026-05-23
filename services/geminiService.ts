@@ -24,9 +24,10 @@ const DEFAULT_CHARACTER_NEGATIVE_CONSTRAINTS = [
   'plastic skin',
 ].join(', ');
 
-function filled(value: string | undefined, fallback: string): string {
-  const v = value?.trim();
-  return v ? v : fallback;
+function filled(value: any, fallback: string): string {
+  if (value === null || value === undefined) return fallback;
+  const s = String(value).trim();
+  return s ? s : fallback;
 }
 
 function buildCharacterIdentityBlock(profile: CharacterProfile): string {
@@ -86,7 +87,8 @@ async function callGemini(
   prompt: string,
   seed: number,
   aspectRatio: "1:1" | "3:4" | "4:3" | "9:16" | "16:9" = "16:9",
-  referenceImage?: string
+  referenceImage?: string,
+  awsCredentials?: any
 ): Promise<GenerationResult> {
   try {
     const response = await fetch('/api/generate', {
@@ -97,6 +99,7 @@ async function callGemini(
         provider: activeProviderConfig.provider === 'local-llm' ? 'local-sd' : activeProviderConfig.provider,
         model: activeProviderConfig.model,
         referenceImage,
+        awsCredentials,
       }),
     });
     const data = await response.json();
@@ -120,10 +123,10 @@ async function callGemini(
   }
 }
 
-export async function generateCharacterImage(
+export function buildCharacterPrompt(
   profile: CharacterProfile,
   type: ReferenceType
-): Promise<GenerationResult> {
+): string {
   const nudeReferenceTypes: ReferenceType[] = [
     'BODY_NUDE',
     'BODY_NUDE_FRONT',
@@ -138,7 +141,7 @@ export async function generateCharacterImage(
   const identityBlock = buildCharacterIdentityBlock(profile);
   const anatomyConstraints =
     'Composition constraints: full body visible head-to-toe, no crop on head/hands/feet, subject occupies ~85% of frame, camera height around sternum. Preserve realistic clavicles, hands, feet, musculature, and skin texture.';
-  const prompt = `${AESTHETIC_PROMPT_CORE}
+  return `${AESTHETIC_PROMPT_CORE}
     ${identityBlock}
     Scene: ${CHARACTER_TEMPLATES[type]}
     ${isNudeReference || type === 'BODY_REVERSE' ? anatomyConstraints : ''}
@@ -146,13 +149,33 @@ export async function generateCharacterImage(
     ${undergarmentLine}
     Negative constraints: ${DEFAULT_CHARACTER_NEGATIVE_CONSTRAINTS}.
     Style: High-fidelity cinematic photography. Strict facial and anatomical consistency.`.trim();
-  return callGemini(prompt, profile.seed, (type === 'BODY_REVERSE' || isNudeReference) ? "3:4" : "16:9", profile.canonHeadshotUrl);
+}
+
+export async function generateCharacterImage(
+  profile: CharacterProfile,
+  type: ReferenceType,
+  awsCredentials?: any
+): Promise<GenerationResult> {
+  const prompt = buildCharacterPrompt(profile, type);
+  const isNudeReference = [
+    'BODY_NUDE', 'BODY_NUDE_FRONT', 'BODY_NUDE_THREE_QUARTER', 'BODY_NUDE_PROFILE', 'BODY_NUDE_BACK'
+  ].includes(type);
+  return callGemini(prompt, profile.seed, (type === 'BODY_REVERSE' || isNudeReference) ? "3:4" : "16:9", profile.canonHeadshotUrl, awsCredentials);
 }
 
 export async function generateSetImage(
   profile: SetProfile,
-  type: SetReferenceType
+  type: SetReferenceType,
+  awsCredentials?: any
 ): Promise<GenerationResult> {
+  const prompt = buildSetPrompt(profile, type);
+  return callGemini(prompt, profile.seed, "16:9", undefined, awsCredentials);
+}
+
+export function buildSetPrompt(
+  profile: SetProfile,
+  type: SetReferenceType
+): string {
   const setName = filled(profile.name, 'Unnamed location');
   const setType = filled(profile.locationType, 'Indoor');
   const style = filled(profile.style, 'Urban spiritual realism');
@@ -176,7 +199,7 @@ export async function generateSetImage(
     'Key camera-left 45 degrees, low-ratio fill, subtle rim, controlled haze.'
   );
 
-  const prompt = `${AESTHETIC_PROMPT_CORE}
+  return `${AESTHETIC_PROMPT_CORE}
     Environment: ${setName}, a ${setType} location. 
     Aesthetic: ${style}. Ambiance: ${ambiance}. 
     Lighting Specs: ${lighting}. Details: ${details}.
@@ -186,13 +209,13 @@ export async function generateSetImage(
     Lighting Rig Lock (LOCKED): ${lightingRigLock}
     Composition: ${SET_TEMPLATES[type]}
     Style: High-fidelity architectural photography.`.trim();
-  return callGemini(prompt, profile.seed, "16:9");
 }
 
 export async function generateCompositeImage(
   char: CharacterProfile,
   set: SetProfile,
-  config: CompositeConfig
+  config: CompositeConfig,
+  awsCredentials?: any
 ): Promise<GenerationResult> {
   const identityBlock = buildCharacterIdentityBlock(char);
   const setName = filled(set.name, 'Unnamed location');
@@ -251,5 +274,5 @@ export async function generateCompositeImage(
     Style: ${compositionStyle}.`.trim();
 
   // Character seed is the identity anchor
-  return callGemini(prompt, char.seed, "16:9", char.canonHeadshotUrl);
+  return callGemini(prompt, char.seed, "16:9", char.canonHeadshotUrl, awsCredentials);
 }

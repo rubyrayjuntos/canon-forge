@@ -6,6 +6,7 @@ interface CharacterFormProps {
   profile: CharacterProfile;
   setProfile: (profile: CharacterProfile) => void;
   onRandomize: () => void;
+  onGenerateLLM: () => void;
   onLoadPersonalStarter?: () => void;
 }
 
@@ -13,6 +14,7 @@ const CharacterForm: React.FC<CharacterFormProps> = ({
   profile,
   setProfile,
   onRandomize,
+  onGenerateLLM,
   onLoadPersonalStarter,
 }) => {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -69,6 +71,12 @@ const CharacterForm: React.FC<CharacterFormProps> = ({
               <i className="fas fa-user-check"></i> Load Personal Starter
             </button>
           )}
+          <button
+            onClick={(e) => { e.preventDefault(); onGenerateLLM(); }}
+            className="text-[10px] bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 border border-amber-500/30 px-3 py-1 rounded-full flex items-center gap-1 transition-all active:scale-95"
+          >
+            <i className="fas fa-sparkles"></i> Forge with LLM
+          </button>
           <button
             onClick={(e) => { e.preventDefault(); onRandomize(); }}
             className="text-[10px] bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-400 border border-indigo-500/30 px-3 py-1 rounded-full flex items-center gap-1 transition-all active:scale-95"

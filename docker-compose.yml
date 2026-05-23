@@ -1,17 +1,33 @@
-version: '3.8'
-
 services:
-  # Stable Diffusion A1111
+  # Stable Diffusion A1111 (NVIDIA Optimized)
   stable-diffusion:
-    image: ghcr.io/ai-dock/stable-diffusion-webui:latest-cpu
+    image: ghcr.io/ai-dock/stable-diffusion-webui:latest-cuda
     container_name: canon-forge-sd
     ports:
       - "7860:17860"
     environment:
-      - COMMANDLINE_ARGS=--listen --api --skip-torch-cuda-test
+      - COMMANDLINE_ARGS=--listen --api --xformers --lowvram --precision full --no-half --no-half-vae
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     volumes:
       - sd_models:/stable-diffusion-webui/models
       - sd_outputs:/stable-diffusion-webui/outputs
+
+  # Ollama for local text LLM (CPU fallback to save VRAM)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: canon-forge-ollama
+    ports:
+      - "11435:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
   # Canon Forge app
   app:
     build:
@@ -23,6 +39,7 @@ services:
       - "3001:3001"  # Node server
     environment:
       - LOCAL_SD_URL=http://stable-diffusion:17860
+      - OLLAMA_URL=http://ollama:11434
       - VITE_LOCAL_SD_URL=http://stable-diffusion:17860
       - VITE_USE_LOCAL_SD=true
       - VITE_HOST=0.0.0.0
@@ -32,7 +49,9 @@ services:
       - /app/node_modules
     depends_on:
       - stable-diffusion
+      - ollama
 
 volumes:
   sd_models:
   sd_outputs:
+  ollama_data:

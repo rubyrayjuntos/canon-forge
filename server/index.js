@@ -30,25 +30,36 @@ const VENICE_ASPECT_RATIO_MAP = {
 };
 const LOCAL_SD_BASE_RES = process.env.LOCAL_SD_BASE_RES
   ? Number(process.env.LOCAL_SD_BASE_RES)
-  : 384;
+  : 512;
 const LOCAL_SD_STEPS = process.env.LOCAL_SD_STEPS
   ? Number(process.env.LOCAL_SD_STEPS)
-  : 16;
+  : 25;
+const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 const LOCAL_SD_CFG_SCALE = process.env.LOCAL_SD_CFG_SCALE
   ? Number(process.env.LOCAL_SD_CFG_SCALE)
   : 7;
 const LOCAL_SD_SAMPLER = process.env.LOCAL_SD_SAMPLER || 'Euler a';
 const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
 const AWS_DEFAULT_IMAGE_MODEL = process.env.AWS_BEDROCK_IMAGE_MODEL || 'amazon.titan-image-generator-v2:0';
-const AWS_IMAGE_MODELS = (process.env.AWS_BEDROCK_IMAGE_MODEL_IDS || AWS_DEFAULT_IMAGE_MODEL)
+const AWS_IMAGE_MODELS = (process.env.AWS_BEDROCK_IMAGE_MODEL_IDS || 'amazon.titan-image-generator-v2:0,amazon.titan-image-generator-v1,stability.stable-diffusion-xl-v1,stability.sd3-large-v1:0')
   .split(',')
   .map((m) => m.trim())
   .filter(Boolean);
 
 let bedrockRuntimeClient;
-function getBedrockRuntimeClient() {
+function getBedrockRuntimeClient(credentials) {
+  const config = { region: AWS_REGION };
+  if (credentials?.accessKeyId && credentials?.secretAccessKey) {
+    config.credentials = {
+      accessKeyId: credentials.accessKeyId,
+      secretAccessKey: credentials.secretAccessKey,
+      sessionToken: credentials.sessionToken,
+    };
+    // Create a new client if custom credentials are provided
+    return new BedrockRuntimeClient(config);
+  }
   if (!bedrockRuntimeClient) {
-    bedrockRuntimeClient = new BedrockRuntimeClient({ region: AWS_REGION });
+    bedrockRuntimeClient = new BedrockRuntimeClient(config);
   }
   return bedrockRuntimeClient;
 }
@@ -65,17 +76,14 @@ function decodeBody(body) {
   return String(body);
 }
 
-async function generateAwsBedrockImage({ modelId, prompt, width, height, safeSeed }) {
-  const client = getBedrockRuntimeClient();
-  const command = new InvokeModelCommand({
-    modelId,
-    contentType: 'application/json',
-    accept: 'application/json',
-    body: JSON.stringify({
+async function generateAwsBedrockImage({ modelId, prompt, width, height, safeSeed, credentials }) {
+  const client = getBedrockRuntimeClient(credentials);
+  let body;
+
+  if (modelId.startsWith('amazon.titan')) {
+    body = JSON.stringify({
       taskType: 'TEXT_IMAGE',
-      textToImageParams: {
-        text: prompt,
-      },
+      textToImageParams: { text: prompt },
       imageGenerationConfig: {
         numberOfImages: 1,
         quality: 'standard',
@@ -84,7 +92,32 @@ async function generateAwsBedrockImage({ modelId, prompt, width, height, safeSee
         cfgScale: 7,
         seed: safeSeed,
       },
-    }),
+    });
+  } else if (modelId.startsWith('stability.stable-diffusion') || modelId.startsWith('stability.sd3')) {
+    // Stability AI models (SDXL, SD3) use a different shape
+    body = JSON.stringify({
+      text_prompts: [{ text: prompt, weight: 1 }],
+      cfg_scale: 7,
+      seed: safeSeed,
+      steps: 30,
+      width,
+      height,
+    });
+  } else {
+    // Default fallback
+    body = JSON.stringify({
+      prompt,
+      width,
+      height,
+      seed: safeSeed,
+    });
+  }
+
+  const command = new InvokeModelCommand({
+    modelId,
+    contentType: 'application/json',
+    accept: 'application/json',
+    body,
   });
 
   const response = await client.send(command);
@@ -180,8 +213,33 @@ app.get('/api/local-sd-status', async (req, res) => {
   }
 });
 
+app.post('/api/generate-text', async (req, res) => {
+  const { prompt, model = 'llama3' } = req.body ?? {};
+  console.log(`[text-gen] prompt received, len=${prompt?.length}`);
+  if (!prompt) return res.status(400).json({ error: 'INVALID_PROMPT' });
+
+  try {
+    const response = await fetch(`${OLLAMA_URL}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        prompt,
+        stream: false,
+      }),
+    });
+
+    if (!response.ok) throw new Error('OLLAMA_ERROR');
+    const data = await response.json();
+    return res.json({ text: data.response });
+  } catch (error) {
+    console.error('[ollama] error:', error);
+    return res.status(502).json({ error: 'LLM_UNAVAILABLE' });
+  }
+});
+
 app.post('/api/generate', async (req, res) => {
-  const { prompt, seed, aspectRatio, fastRender, provider = 'gemini', model, referenceImage } = req.body ?? {};
+  const { prompt, seed, aspectRatio, fastRender, provider = 'gemini', model, referenceImage, awsCredentials } = req.body ?? {};
   if (!prompt || typeof prompt !== 'string') {
     return res.status(400).json({ error: 'INVALID_PROMPT' });
   }
@@ -196,6 +254,7 @@ app.post('/api/generate', async (req, res) => {
     if (provider === 'local-sd') {
       const localSdUrl = process.env.LOCAL_SD_URL || 'http://localhost:7860';
       const { width, height } = getLocalSdDimensions(ratio);
+      console.log(`[local-sd] fetching ${localSdUrl}/sdapi/v1/txt2img`);
 
       const sdRes = await Promise.race([
         fetch(`${localSdUrl}/sdapi/v1/txt2img`, {
@@ -278,7 +337,7 @@ app.post('/api/generate', async (req, res) => {
       const { width, height } = VENICE_ASPECT_RATIO_MAP[ratio] || VENICE_ASPECT_RATIO_MAP['16:9'];
       const modelId = model || AWS_DEFAULT_IMAGE_MODEL;
       const url = await Promise.race([
-        generateAwsBedrockImage({ modelId, prompt, width, height, safeSeed }),
+        generateAwsBedrockImage({ modelId, prompt, width, height, safeSeed, credentials: awsCredentials }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), REQUEST_TIMEOUT_MS)),
       ]);
       return res.json({ url, prompt });
