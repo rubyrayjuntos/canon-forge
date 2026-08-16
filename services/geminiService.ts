@@ -73,11 +73,11 @@ function buildUndergarmentLine(profile: CharacterProfile): string {
 }
 
 export interface ProviderConfig {
-  provider: 'gemini' | 'venice' | 'aws' | 'local-llm';
+  provider: 'gemini' | 'venice' | 'aws' | 'xai' | 'local-llm';
   model: string;
 }
 
-let activeProviderConfig: ProviderConfig = { provider: 'gemini', model: 'gemini-3-pro-image-preview' };
+let activeProviderConfig: ProviderConfig = { provider: 'xai', model: 'grok-imagine-image' };
 
 export function setProviderConfig(config: ProviderConfig) {
   activeProviderConfig = config;

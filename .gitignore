@@ -25,3 +25,7 @@ dist-ssr
 
 # AutoClaw KDream data
 .autoclaw/
+
+# Secrets — keep local env files out of git
+.env
+

@@ -26,7 +26,8 @@ import { generateCompositeVideo } from './services/videoService';
 import CharacterForm from './components/CharacterForm';
 import SceneForgePanel from './components/SceneForgePanel';
 import Toast from './components/Toast';
-import { downloadImage } from './utils/helpers';
+import { downloadImage, copyToClipboard } from './utils/helpers';
+import { pickFirstModelIfMissing } from './utils/providerModels';
 import {
   loadSavedCharacters,
   loadSavedSets,
@@ -451,7 +452,7 @@ const App: React.FC = () => {
     emotionTone: 'quiet resolve and focused anticipation',
     landmarkLock: 'Preserve established set landmarks and spacing from SetForge.',
   });
-  const [awsCredentials, setAwsCredentials] = useState<{ accessKeyId: string; secretAccessKey: string; sessionToken?: string } | null>(() => {
+  const [awsCredentials, setAwsCredentials] = useState<{ accessKeyId: string; secretAccessKey: string; sessionToken?: string; region: string } | null>(() => {
     const saved = localStorage.getItem('canon_aws_auth');
     return saved ? JSON.parse(saved) : null;
   });
@@ -468,15 +469,43 @@ const App: React.FC = () => {
   const [personalStarter, setPersonalStarter] = useState<CharacterProfile | null>(null);
   const [consistencyReport, setConsistencyReport] = useState<ConsistencyReportItem[]>([]);
 
-  const [providerConfig, setProviderConfigState] = useState<ProviderConfig>({ provider: 'gemini', model: 'gemini-3-pro-image-preview' });
-  const [availableModels, setAvailableModels] = useState<{ gemini: {id:string;name:string}[]; venice: {id:string;name:string}[]; aws: {id:string;name:string}[] }>({ gemini: [], venice: [], aws: [] });
+  const [providerConfig, setProviderConfigState] = useState<ProviderConfig>({ provider: 'xai', model: 'grok-imagine-image' });
+  const [availableModels, setAvailableModels] = useState<{ gemini: {id:string;name:string}[]; venice: {id:string;name:string}[]; aws: {id:string;name:string}[]; xai: {id:string;name:string}[] }>({ gemini: [], venice: [], aws: [], xai: [] });
   const [localSdAvailable, setLocalSdAvailable] = useState(false);
 
-  useEffect(() => {
-    fetch('/api/models').then(r => r.json()).then(data => {
-      setAvailableModels(data);
-    }).catch(() => {});
+  const fetchModels = useCallback((creds?: any) => {
+    fetch('/api/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ awsCredentials: creds }),
+    })
+      .then(r => r.json())
+      .then(data => {
+        setAvailableModels(data);
+      })
+      .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    fetchModels(awsCredentials);
+  }, [awsCredentials, fetchModels]);
+
+  // Handle auto-model selection when list changes or provider changes
+  useEffect(() => {
+    if (providerConfig.provider === 'aws') {
+      const nextModel = pickFirstModelIfMissing(providerConfig.model, availableModels.aws);
+      if (nextModel) {
+        setProviderConfigState((prev) => ({ ...prev, model: nextModel }));
+      }
+    }
+
+    if (providerConfig.provider === 'xai') {
+      const nextModel = pickFirstModelIfMissing(providerConfig.model, availableModels.xai);
+      if (nextModel) {
+        setProviderConfigState((prev) => ({ ...prev, model: nextModel }));
+      }
+    }
+  }, [availableModels.aws, availableModels.xai, providerConfig.model, providerConfig.provider]);
 
   useEffect(() => {
     if (providerConfig.provider === 'aws' && !awsCredentials) {
@@ -538,6 +567,15 @@ const App: React.FC = () => {
   useEffect(() => {
     saveToStorage(CONSISTENCY_REPORT_STORAGE_KEY, consistencyReport);
   }, [consistencyReport]);
+
+  const handleCopyToClipboard = useCallback(async (text: string) => {
+    try {
+      await copyToClipboard(text);
+      setToastState({ message: 'Copied to clipboard', type: 'success', visible: true });
+    } catch {
+      setToastState({ message: 'Failed to copy to clipboard', type: 'error', visible: true });
+    }
+  }, []);
 
   const saveCurrentAsPersonalStarter = useCallback(() => {
     const success = savePersonalStarter(charProfile);
@@ -675,6 +713,17 @@ const App: React.FC = () => {
         success = true;
       } catch (e: any) {
         const message = e.message || 'An unknown error occurred';
+        if (message === 'AUTH_REQUIRED') {
+          if (providerConfig.provider === 'aws') {
+            setIsAwsDialogOpen(true);
+          } else {
+            setToastState({
+              message: 'API key missing or invalid for this provider.',
+              type: 'error',
+              visible: true,
+            });
+          }
+        }
         updateRef({ status: 'error', error: message });
         setGenState((prev) => ({ ...prev, error: message }));
       } finally {
@@ -955,12 +1004,12 @@ const App: React.FC = () => {
     setCharRefs([]);
   };
 
-  const handleCopyPrompt = (type: string, context: 'CharacterForge' | 'SetForge') => {
+  const handleCopyPrompt = useCallback((type: string, context: 'CharacterForge' | 'SetForge') => {
     const prompt = context === 'CharacterForge' 
       ? buildCharacterPrompt(charProfile, type as any)
       : buildSetPrompt(setProfile, type as any);
     handleCopyToClipboard(prompt);
-  };
+  }, [charProfile, setProfile, handleCopyToClipboard]);
 
   const randomizeSet = () => {
     const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
@@ -1088,13 +1137,15 @@ const App: React.FC = () => {
               <select
                 value={providerConfig.provider}
                 onChange={e => {
-                  const p = e.target.value as 'gemini' | 'venice' | 'aws' | 'local-llm';
+                  const p = e.target.value as 'gemini' | 'venice' | 'aws' | 'xai' | 'local-llm';
                   const defaultModel = p === 'gemini'
                     ? (availableModels.gemini[0]?.id || 'gemini-3-pro-image-preview')
                     : p === 'venice'
                     ? (availableModels.venice[0]?.id || 'flux-dev-uncensored')
                     : p === 'aws'
                     ? (availableModels.aws[0]?.id || 'amazon.titan-image-generator-v2:0')
+                    : p === 'xai'
+                    ? (availableModels.xai[0]?.id || 'grok-imagine-image')
                     : 'local-llm';
                   setProviderConfigState({ provider: p, model: defaultModel });
                 }}
@@ -1103,6 +1154,7 @@ const App: React.FC = () => {
                 <option value="gemini">Gemini</option>
                 <option value="venice">Venice</option>
                 <option value="aws">AWS</option>
+                <option value="xai">xAI</option>
                 <option value="local-llm">Local LLM</option>
               </select>
               {providerConfig.provider !== 'local-llm' && (
@@ -1117,7 +1169,9 @@ const App: React.FC = () => {
                       ? availableModels.gemini
                       : providerConfig.provider === 'venice'
                       ? availableModels.venice
-                      : availableModels.aws).map(m => (
+                      : providerConfig.provider === 'aws'
+                      ? availableModels.aws
+                      : availableModels.xai).map(m => (
                       <option key={m.id} value={m.id}>{m.name}</option>
                     ))}
                   </select>
@@ -1717,7 +1771,14 @@ const App: React.FC = () => {
       <footer className="bg-slate-950 border-t border-slate-900 p-4 text-[9px] text-slate-600 uppercase tracking-widest flex justify-between">
         <div className="flex gap-4">
           <span className="flex items-center gap-2">
-            <span className="w-1 h-1 bg-green-500 rounded-full"></span> Gemini Engine
+            <span className={`w-1.5 h-1.5 rounded-full ${
+              providerConfig.provider === 'xai' ? 'bg-fuchsia-500 animate-pulse' :
+              providerConfig.provider === 'aws' ? 'bg-orange-500 animate-pulse' : 
+              providerConfig.provider === 'venice' ? 'bg-cyan-500' : 
+              providerConfig.provider === 'local-llm' ? 'bg-amber-500' :
+              'bg-green-500'
+            }`}></span> 
+            {providerConfig.provider.toUpperCase()} ENGINE
           </span>
           <span>Tab: {activeTab}</span>
         </div>

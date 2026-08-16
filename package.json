@@ -13,9 +13,11 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "format": "prettier --write \"**/*.{ts,tsx,json,md}\""
+    "format": "prettier --write \"**/*.{ts,tsx,json,md}\"",
+    "test": "node --test server/xai.test.js server/bedrockModels.test.js utils/providerModels.test.js"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock": "^3.1053.0",
     "@aws-sdk/client-bedrock-runtime": "^3.821.0",
     "@google/genai": "^1.34.0",
     "dotenv": "^16.4.5",

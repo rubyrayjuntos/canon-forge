@@ -4,6 +4,15 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import { BedrockClient, ListFoundationModelsCommand } from '@aws-sdk/client-bedrock';
+import {
+  buildXaiImageBody,
+  normalizeXaiImageUrl,
+  xaiImageGenerationModelsUrl,
+  xaiImagesEditsUrl,
+  xaiImagesGenerationsUrl,
+} from './xai.js';
+import { isSupportedBedrockImageModel } from './bedrockModels.js';
 
 dotenv.config({ path: '.env.local' });
 dotenv.config();
@@ -30,7 +39,7 @@ const VENICE_ASPECT_RATIO_MAP = {
 };
 const LOCAL_SD_BASE_RES = process.env.LOCAL_SD_BASE_RES
   ? Number(process.env.LOCAL_SD_BASE_RES)
-  : 512;
+  : 768;
 const LOCAL_SD_STEPS = process.env.LOCAL_SD_STEPS
   ? Number(process.env.LOCAL_SD_STEPS)
   : 25;
@@ -38,17 +47,23 @@ const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 const LOCAL_SD_CFG_SCALE = process.env.LOCAL_SD_CFG_SCALE
   ? Number(process.env.LOCAL_SD_CFG_SCALE)
   : 7;
-const LOCAL_SD_SAMPLER = process.env.LOCAL_SD_SAMPLER || 'Euler a';
+const LOCAL_SD_SAMPLER = process.env.LOCAL_SD_SAMPLER || 'DPM++ 2M Karras';
 const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
 const AWS_DEFAULT_IMAGE_MODEL = process.env.AWS_BEDROCK_IMAGE_MODEL || 'amazon.titan-image-generator-v2:0';
 const AWS_IMAGE_MODELS = (process.env.AWS_BEDROCK_IMAGE_MODEL_IDS || 'amazon.titan-image-generator-v2:0,amazon.titan-image-generator-v1,stability.stable-diffusion-xl-v1,stability.sd3-large-v1:0')
   .split(',')
   .map((m) => m.trim())
   .filter(Boolean);
+const XAI_API_KEY = process.env.XAI_API_KEY;
+const XAI_IMAGE_MODEL = process.env.XAI_IMAGE_MODEL || 'grok-imagine-image';
+const XAI_IMAGE_MODELS = (process.env.XAI_IMAGE_MODELS || XAI_IMAGE_MODEL)
+  .split(',')
+  .map((m) => m.trim())
+  .filter(Boolean);
 
 let bedrockRuntimeClient;
 function getBedrockRuntimeClient(credentials) {
-  const config = { region: AWS_REGION };
+  const config = { region: credentials?.region || AWS_REGION };
   if (credentials?.accessKeyId && credentials?.secretAccessKey) {
     config.credentials = {
       accessKeyId: credentials.accessKeyId,
@@ -63,6 +78,24 @@ function getBedrockRuntimeClient(credentials) {
   }
   return bedrockRuntimeClient;
 }
+
+let bedrockClient;
+function getBedrockClient(credentials) {
+  const config = { region: credentials?.region || AWS_REGION };
+  if (credentials?.accessKeyId && credentials?.secretAccessKey) {
+    config.credentials = {
+      accessKeyId: credentials.accessKeyId,
+      secretAccessKey: credentials.secretAccessKey,
+      sessionToken: credentials.sessionToken,
+    };
+    return new BedrockClient(config);
+  }
+  if (!bedrockClient) {
+    bedrockClient = new BedrockClient(config);
+  }
+  return bedrockClient;
+}
+
 
 function decodeBody(body) {
   if (!body) return '';
@@ -80,7 +113,7 @@ async function generateAwsBedrockImage({ modelId, prompt, width, height, safeSee
   const client = getBedrockRuntimeClient(credentials);
   let body;
 
-  if (modelId.startsWith('amazon.titan')) {
+  if (modelId.startsWith('amazon.titan-image') || modelId.startsWith('amazon.nova-canvas')) {
     body = JSON.stringify({
       taskType: 'TEXT_IMAGE',
       textToImageParams: { text: prompt },
@@ -104,13 +137,7 @@ async function generateAwsBedrockImage({ modelId, prompt, width, height, safeSee
       height,
     });
   } else {
-    // Default fallback
-    body = JSON.stringify({
-      prompt,
-      width,
-      height,
-      seed: safeSeed,
-    });
+    throw new Error('MODEL_UNAVAILABLE');
   }
 
   const command = new InvokeModelCommand({
@@ -141,9 +168,13 @@ function toMultipleOf64(value) {
 }
 
 function getLocalSdDimensions(aspectRatio) {
-  const fallback = VENICE_ASPECT_RATIO_MAP['16:9'];
+  const fallback = VENICE_ASPECT_RATIO_MAP['1:1'];
   const source = VENICE_ASPECT_RATIO_MAP[aspectRatio] || fallback;
-  const scale = LOCAL_SD_BASE_RES / Math.max(source.width, source.height);
+  // Use area-based scaling for consistent quality across aspect ratios
+  const targetArea = LOCAL_SD_BASE_RES * LOCAL_SD_BASE_RES;
+  const sourceArea = source.width * source.height;
+  const scale = Math.sqrt(targetArea / sourceArea);
+  
   return {
     width: toMultipleOf64(source.width * scale),
     height: toMultipleOf64(source.height * scale),
@@ -158,16 +189,16 @@ const GEMINI_IMAGE_MODELS = [
   'gemini-2.5-flash-image',
 ];
 
-app.get('/api/models', async (req, res) => {
+app.post('/api/models', async (req, res) => {
+  const { awsCredentials } = req.body ?? {};
   const geminiKey = process.env.GEMINI_API_KEY;
   const veniceKey = process.env.VENICE_API_KEY;
   const awsAccessKey = process.env.AWS_ACCESS_KEY_ID;
   const awsSecretKey = process.env.AWS_SECRET_ACCESS_KEY;
-  const awsSessionToken = process.env.AWS_SESSION_TOKEN;
   const hasAwsRuntimeAuth = Boolean(
     (awsAccessKey && awsSecretKey) || process.env.AWS_PROFILE || process.env.AWS_WEB_IDENTITY_TOKEN_FILE || process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI || process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI || process.env.AWS_EC2_METADATA_DISABLED === 'false'
   );
-  const result = { gemini: [], venice: [], aws: [] };
+  const result = { gemini: [], venice: [], aws: [], xai: [] };
 
   if (geminiKey) {
     try {
@@ -193,8 +224,55 @@ app.get('/api/models', async (req, res) => {
     }
   }
 
-  if (hasAwsRuntimeAuth || AWS_IMAGE_MODELS.length > 0) {
+  if (hasAwsRuntimeAuth || awsCredentials) {
+    try {
+      const client = getBedrockClient(awsCredentials);
+      const command = new ListFoundationModelsCommand({
+        byOutputModality: 'IMAGE'
+      });
+      const data = await client.send(command);
+      console.log(`[models] bedrock models found: ${data.modelSummaries?.length || 0}`);
+      result.aws = (data.modelSummaries || [])
+        .filter(m => m.modelLifecycle?.status !== 'LEGACY' && m.modelLifecycle?.status !== 'RETIRED')
+        .filter(m => isSupportedBedrockImageModel(m.modelId))
+        .map(m => ({ id: m.modelId, name: m.modelName || m.modelId }));
+      
+      if (result.aws.length === 0 && AWS_IMAGE_MODELS.length > 0) {
+        result.aws = AWS_IMAGE_MODELS.map((id) => ({ id, name: id }));
+      }
+    } catch (e) {
+      console.warn('[models] aws fetch failed:', e.message);
+      if (AWS_IMAGE_MODELS.length > 0) {
+        result.aws = AWS_IMAGE_MODELS.map((id) => ({ id, name: id }));
+      }
+    }
+  } else if (AWS_IMAGE_MODELS.length > 0) {
     result.aws = AWS_IMAGE_MODELS.map((id) => ({ id, name: id }));
+  }
+
+  if (XAI_API_KEY) {
+    try {
+      const r = await fetch(xaiImageGenerationModelsUrl(), {
+        headers: { Authorization: `Bearer ${XAI_API_KEY}` },
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        throw new Error(`XAI_MODELS_${r.status}`);
+      }
+      result.xai = (data.models || [])
+        .map((m) => ({ id: m.id, name: m.aliases?.[0] || m.id }))
+        .filter((m) => Boolean(m.id));
+      if (result.xai.length === 0 && XAI_IMAGE_MODELS.length > 0) {
+        result.xai = XAI_IMAGE_MODELS.map((id) => ({ id, name: id }));
+      }
+    } catch (e) {
+      console.warn('[models] xai fetch failed:', e.message);
+      if (XAI_IMAGE_MODELS.length > 0) {
+        result.xai = XAI_IMAGE_MODELS.map((id) => ({ id, name: id }));
+      }
+    }
+  } else if (XAI_IMAGE_MODELS.length > 0) {
+    result.xai = XAI_IMAGE_MODELS.map((id) => ({ id, name: id }));
   }
 
   return res.json(result);
@@ -250,26 +328,70 @@ app.post('/api/generate', async (req, res) => {
   console.log(`[generate] start provider=${provider} model=${model || 'default'} ratio=${ratio} seed=${safeSeed}`);
 
   try {
+    // --- xAI Grok Imagine ---
+    if (provider === 'xai') {
+      if (!XAI_API_KEY) return res.status(401).json({ error: 'AUTH_REQUIRED' });
+
+      const isEdit = Boolean(referenceImage);
+      const xaiBody = buildXaiImageBody({
+        model: model || XAI_IMAGE_MODEL,
+        prompt,
+        aspectRatio: ratio,
+        referenceImage,
+      });
+
+      const xaiRes = await Promise.race([
+        fetch(isEdit ? xaiImagesEditsUrl() : xaiImagesGenerationsUrl(), {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${XAI_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(xaiBody),
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), REQUEST_TIMEOUT_MS)),
+      ]);
+
+      const xaiData = await xaiRes.json();
+      if (!xaiRes.ok) {
+        console.error('[xai] API error:', xaiData?.error?.message || xaiData?.message || `XAI_ERROR_${xaiRes.status}`, JSON.stringify(xaiData).slice(0, 500));
+        if (xaiRes.status === 401 || xaiRes.status === 403) return res.status(401).json({ error: 'AUTH_REQUIRED' });
+        if (xaiRes.status === 429) return res.status(429).json({ error: 'RATE_LIMITED' });
+        if (xaiRes.status === 503) return res.status(503).json({ error: 'MODEL_UNAVAILABLE' });
+        return res.status(502).json({ error: 'GENERATION_FAILED' });
+      }
+
+      const url = normalizeXaiImageUrl(xaiData);
+      if (!url) return res.status(502).json({ error: 'NO_IMAGE_DATA' });
+      return res.json({ url, prompt });
+    }
+
     // --- Local Stable Diffusion (AUTOMATIC1111) ---
     if (provider === 'local-sd') {
       const localSdUrl = process.env.LOCAL_SD_URL || 'http://localhost:7860';
       const { width, height } = getLocalSdDimensions(ratio);
       console.log(`[local-sd] fetching ${localSdUrl}/sdapi/v1/txt2img`);
 
+      const localPrompt = `${prompt}, high-fidelity, photorealistic, raw photo, 8k uhd, highly detailed skin, realistic eyes`;
       const sdRes = await Promise.race([
         fetch(`${localSdUrl}/sdapi/v1/txt2img`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            prompt,
+            prompt: localPrompt,
             negative_prompt:
-              'deformed, disfigured, bad anatomy, extra limbs, missing limbs, duplicate body, duplicate person, triptych, diptych, contact sheet, split screen, collage, watermark, text, blurry, low quality',
+              'deformed, disfigured, bad anatomy, extra limbs, missing limbs, duplicate body, duplicate person, triptych, diptych, contact sheet, split screen, collage, watermark, text, blurry, low quality, grainy, lowres, monochrome, signature, cut off, out of frame, bad proportions, gross proportions, cloned face, mutation',
             steps: LOCAL_SD_STEPS,
             width,
             height,
             seed: safeSeed,
             cfg_scale: LOCAL_SD_CFG_SCALE,
             sampler_name: LOCAL_SD_SAMPLER,
+            enable_hr: true,
+            denoising_strength: 0.55,
+            hr_scale: 1.5,
+            hr_upscaler: 'Latent',
+            hr_second_pass_steps: 15,
           }),
         }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), REQUEST_TIMEOUT_MS)),

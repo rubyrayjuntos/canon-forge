@@ -6,7 +6,7 @@ services:
     ports:
       - "7860:17860"
     environment:
-      - COMMANDLINE_ARGS=--listen --api --xformers --lowvram --precision full --no-half --no-half-vae
+      - COMMANDLINE_ARGS=--listen --api --xformers --medvram-sdxl
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
     deploy:
       resources:

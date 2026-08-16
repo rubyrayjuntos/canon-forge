@@ -4,13 +4,14 @@ import React, { useState } from 'react';
 interface AwsAuthDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (credentials: { accessKeyId: string; secretAccessKey: string; sessionToken?: string }) => void;
+  onSave: (credentials: { accessKeyId: string; secretAccessKey: string; sessionToken?: string; region: string }) => void;
 }
 
 const AwsAuthDialog: React.FC<AwsAuthDialogProps> = ({ isOpen, onClose, onSave }) => {
   const [accessKeyId, setAccessKeyId] = useState('');
   const [secretAccessKey, setSecretAccessKey] = useState('');
   const [sessionToken, setSessionToken] = useState('');
+  const [region, setRegion] = useState('us-east-1');
 
   if (!isOpen) return null;
 
@@ -32,7 +33,7 @@ const AwsAuthDialog: React.FC<AwsAuthDialogProps> = ({ isOpen, onClose, onSave }
         <div className="p-6 space-y-4">
           <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
             <p className="text-[10px] text-amber-200/70 leading-relaxed uppercase tracking-wider">
-              <i className="fas fa-shield-halved mr-1"></i> These credentials stay in your browser session. They are used to sign requests to Amazon Bedrock.
+              <i className="fas fa-shield-halved mr-1"></i> Credentials are stored in this browser and sent to the local Canon Forge server to sign Amazon Bedrock requests. They are not stored by the server.
             </p>
           </div>
 
@@ -59,6 +60,17 @@ const AwsAuthDialog: React.FC<AwsAuthDialogProps> = ({ isOpen, onClose, onSave }
           </div>
 
           <div>
+            <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-1.5">AWS Region</label>
+            <input
+              type="text"
+              value={region}
+              onChange={(e) => setRegion(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:border-orange-500 outline-none transition-colors font-mono"
+              placeholder="us-east-1"
+            />
+          </div>
+
+          <div>
             <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-1.5">Session Token (Optional)</label>
             <textarea
               value={sessionToken}
@@ -72,7 +84,7 @@ const AwsAuthDialog: React.FC<AwsAuthDialogProps> = ({ isOpen, onClose, onSave }
             <button
               onClick={() => {
                 if (accessKeyId && secretAccessKey) {
-                  onSave({ accessKeyId, secretAccessKey, sessionToken });
+                  onSave({ accessKeyId, secretAccessKey, sessionToken, region });
                   onClose();
                 }
               }}
