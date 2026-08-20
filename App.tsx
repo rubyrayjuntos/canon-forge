@@ -25,9 +25,18 @@ import {
 import { generateCompositeVideo } from './services/videoService';
 import CharacterForm from './components/CharacterForm';
 import SceneForgePanel from './components/SceneForgePanel';
+import CanonChecklist, {
+  CanonNextAction,
+  getCanonProgress,
+} from './components/CanonChecklist';
 import Toast from './components/Toast';
 import { downloadImage, copyToClipboard } from './utils/helpers';
 import { pickFirstModelIfMissing } from './utils/providerModels';
+import {
+  pickAutoLockPatch,
+  requiresCanonFace,
+  vaultAspectClass,
+} from './utils/identityLock.js';
 import {
   loadSavedCharacters,
   loadSavedSets,
@@ -45,6 +54,89 @@ import AwsAuthDialog from './components/AwsAuthDialog';
 // --- Helper Functions ---
 const generateId = (): string => Math.random().toString(36).substring(2, 15);
 const generateSeed = (): number => Math.floor(Math.random() * 2147483647);
+
+function parseJsonObject(text: string): Record<string, any> {
+  const cleanJson = text.match(/\{[\s\S]*\}/)?.[0] || text;
+  return JSON.parse(cleanJson);
+}
+
+const MALE_UNDERGARMENT_TYPES = [
+  'None',
+  'Minimal briefs',
+  'Boxer briefs',
+  'Boxers',
+  'Compression shorts',
+  'Dance belt',
+  'Bodysuit',
+];
+const UNDERGARMENT_FITS = ['Standard', 'Tight', 'Loose', 'High-cut', 'Low-rise', 'High-waist'];
+const UNDERGARMENT_STYLES = [
+  'Neutral',
+  'Matte black',
+  'Charcoal grey',
+  'Skin-tone',
+  'White cotton',
+  'Muted earth tones',
+  'Minimal seams',
+];
+
+function filledStr(value: unknown, fallback: string): string {
+  const s = String(value ?? '').trim();
+  return s || fallback;
+}
+
+function pickAllowed(value: unknown, allowed: string[], fallback: string): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) return fallback;
+  const match = allowed.find((item) => item.toLowerCase() === raw.toLowerCase());
+  return match || fallback;
+}
+
+function characterFromLlmJson(generated: Record<string, any>): CharacterProfile {
+  const undergarmentType = pickAllowed(
+    generated.undergarmentType,
+    MALE_UNDERGARMENT_TYPES,
+    'Boxer briefs'
+  );
+  const undergarmentFit =
+    undergarmentType === 'None'
+      ? ''
+      : pickAllowed(generated.undergarmentFit, UNDERGARMENT_FITS, 'Tight');
+  const undergarmentStyle =
+    undergarmentType === 'None'
+      ? ''
+      : pickAllowed(generated.undergarmentStyle, UNDERGARMENT_STYLES, 'Matte black');
+
+  return {
+    id: generateId(),
+    seed: generateSeed(),
+    gender: 'Male',
+    name: filledStr(generated.name, 'Unnamed'),
+    age: filledStr(generated.age, String(21 + Math.floor(Math.random() * 35))),
+    build: filledStr(generated.build, 'athletic with natural proportions'),
+    eyes: filledStr(generated.eyes, 'dark brown'),
+    hair: filledStr(generated.hair, 'short textured hair'),
+    skinTone: filledStr(generated.skinTone, 'medium skin tone with natural texture'),
+    distinctiveFeatures: filledStr(
+      generated.distinctiveFeatures,
+      'defined jawline, subtle asymmetry around brows, realistic skin pores'
+    ),
+    wardrobe: filledStr(
+      generated.wardrobe,
+      'weathered dark jacket, charcoal tee, utilitarian trousers, worn boots'
+    ),
+    personality: filledStr(generated.personality, 'Calm, observant, emotionally contained under pressure.'),
+    backstory: filledStr(
+      generated.backstory,
+      'Carries lived urban history; disciplined and self-possessed.'
+    ),
+    aesthetic: filledStr(generated.aesthetic, 'Urban Spiritual Realism'),
+    undergarmentType,
+    undergarmentFit,
+    undergarmentStyle,
+    canonHeadshotUrl: undefined,
+  };
+}
 const MAX_CONCURRENT_IMAGE_RENDERS = 3;
 const CONSISTENCY_REPORT_STORAGE_KEY = 'consistency_report_card';
 
@@ -62,7 +154,7 @@ function buildPersonalStarter(base: CharacterProfile): CharacterProfile {
     distinctiveFeatures:
       'rectangular black glasses, dense dark beard connected to mustache, pronounced brow, sharp jawline, visible collarbone structure',
     wardrobe:
-      'open charcoal button-down over bare torso, tailored dark trousers; optional minimalist boxer-briefs for anatomical studies',
+      'charcoal button-down over a dark knit tee, tailored trousers, leather boots',
     personality:
       'Composed, introspective, and grounded; carries quiet confidence with a calm but intense gaze.',
     backstory:
@@ -215,9 +307,15 @@ interface ReferenceGalleryProps {
   onDelete: (id: string) => void;
   onRetry: (image: ReferenceImage) => void;
   onCopyPrompt: (type: string) => void;
+  onVerdict?: (id: string, verdict: 'approved' | 'rejected') => void;
+  onLockCanon?: (image: ReferenceImage) => void;
+  lockedUrl?: string;
+  lockLabel?: string;
   disableGenerate: boolean;
   activeCount: number;
   types: Array<{ type: string; label: string; icon: string }>;
+  primaryTypes?: string[];
+  emptyHint?: string;
 }
 
 const ReferenceGallery: React.FC<ReferenceGalleryProps> = ({
@@ -226,11 +324,28 @@ const ReferenceGallery: React.FC<ReferenceGalleryProps> = ({
   onDelete,
   onRetry,
   onCopyPrompt,
+  onVerdict,
+  onLockCanon,
+  lockedUrl,
+  lockLabel = 'Lock as canon',
   disableGenerate,
   activeCount,
   types,
+  primaryTypes,
+  emptyHint,
 }) => {
   const [expandedPrompt, setExpandedPrompt] = useState<string | null>(null);
+  const [showMoreTypes, setShowMoreTypes] = useState(false);
+  const primarySet = new Set(primaryTypes || []);
+  const primaryShotTypes = primaryTypes?.length
+    ? types.filter((t) => primarySet.has(t.type))
+    : types;
+  const extraShotTypes = primaryTypes?.length
+    ? types.filter((t) => !primarySet.has(t.type))
+    : [];
+  const visibleTypes = extraShotTypes.length && !showMoreTypes
+    ? primaryShotTypes
+    : types;
   const [lightboxImage, setLightboxImage] = useState<ReferenceImage | null>(null);
   const [loadingImages, setLoadingImages] = useState<Set<string>>(new Set());
   const [failedImageLoads, setFailedImageLoads] = useState<Set<string>>(new Set());
@@ -274,12 +389,18 @@ const ReferenceGallery: React.FC<ReferenceGalleryProps> = ({
         <Toast message={toastState.message} type={toastState.type} onClose={hideToast} />
       )}
       <div className="flex flex-wrap gap-3 items-center">
-        {types.map((t) => (
+        {visibleTypes.map((t) => {
+          const isPrimary = !primaryTypes?.length || primarySet.has(t.type);
+          return (
           <div key={t.type} className="flex items-center">
             <button
               onClick={() => onGenerate(t.type)}
               disabled={disableGenerate}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-l-full border border-indigo-500/30 text-xs font-medium transition-all hover:bg-indigo-600/20 hover:border-indigo-500 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed border-r-0"
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-l-full border text-xs font-medium transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed border-r-0 ${
+                isPrimary
+                  ? 'border-indigo-500/60 bg-indigo-600/20 text-white hover:bg-indigo-600/30'
+                  : 'border-indigo-500/30 hover:bg-indigo-600/20 hover:border-indigo-500'
+              }`}
             >
               <i className={`fas ${t.icon} text-indigo-400`}></i>
               {t.label}
@@ -292,16 +413,44 @@ const ReferenceGallery: React.FC<ReferenceGalleryProps> = ({
               <i className="fas fa-copy"></i>
             </button>
           </div>
-        ))}
+          );
+        })}
+        {extraShotTypes.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowMoreTypes((open) => !open)}
+            className="text-[10px] uppercase tracking-widest text-slate-500 hover:text-slate-300"
+          >
+            {showMoreTypes ? 'Fewer shots' : `More shots (${extraShotTypes.length})`}
+          </button>
+        )}
+        {showMoreTypes && extraShotTypes.some((t) => t.type.startsWith('BODY_NUDE')) && (
+          <p className="text-[10px] text-slate-500 w-full">
+            Figure plates use the selected provider. If the provider rejects a request, Canon Forge reports that provider response without rerouting.
+          </p>
+        )}
         <span className={`text-[10px] uppercase tracking-widest font-mono ${disableGenerate ? 'text-amber-400' : 'text-slate-500'}`}>
           Renders: {activeCount}/{MAX_CONCURRENT_IMAGE_RENDERS}
         </span>
       </div>
+      {images.length === 0 && emptyHint && (
+        <p className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl px-4 py-6 text-center">
+          {emptyHint}
+        </p>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {images.map((img: ReferenceImage) => (
           <div
             key={img.id}
-            className="group relative bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg hover:border-indigo-500/50 transition-all flex flex-col"
+            className={`group relative bg-slate-900 border rounded-xl overflow-hidden shadow-lg transition-all flex flex-col ${
+              lockedUrl && img.url === lockedUrl
+                ? 'border-emerald-400 ring-1 ring-emerald-400/40'
+                : img.verdict === 'approved'
+                ? 'border-emerald-500/60'
+                : img.verdict === 'rejected'
+                  ? 'border-red-500/40 opacity-70'
+                  : 'border-slate-800 hover:border-indigo-500/50'
+            }`}
           >
             {(img.status === 'pending' || loadingImages.has(img.id)) && (
               <div className="absolute inset-0 z-10 bg-slate-900/90 flex flex-col items-center justify-center">
@@ -316,9 +465,9 @@ const ReferenceGallery: React.FC<ReferenceGalleryProps> = ({
               </div>
             )}
             {img.status === 'pending' ? (
-              <div className="aspect-video w-full bg-slate-950"></div>
+              <div className={`${vaultAspectClass(img.type)} w-full bg-slate-950`}></div>
             ) : img.status === 'error' ? (
-              <div className="aspect-video w-full flex flex-col items-center justify-center bg-slate-950 text-center px-4">
+              <div className={`${vaultAspectClass(img.type)} w-full flex flex-col items-center justify-center bg-slate-950 text-center px-4`}>
                 <p className="text-red-400 text-xs uppercase tracking-wider mb-2">Render request failed</p>
                 <p className="text-[11px] text-slate-500">{img.error || 'The generation API call failed.'}</p>
                 <button
@@ -329,17 +478,49 @@ const ReferenceGallery: React.FC<ReferenceGalleryProps> = ({
                 </button>
               </div>
             ) : (
-              <img
-                src={img.url}
-                className="aspect-video w-full object-cover transition-transform group-hover:scale-105 cursor-zoom-in"
-                onClick={() => img.url && setLightboxImage(img)}
-                onLoad={() => handleImageLoad(img.id)}
-                onError={() => handleImageError(img.id)}
-              />
+              <div className="w-full bg-slate-950">
+                <img
+                  src={img.url}
+                  className="block w-full h-auto cursor-zoom-in"
+                  onClick={() => img.url && setLightboxImage(img)}
+                  onLoad={() => handleImageLoad(img.id)}
+                  onError={() => handleImageError(img.id)}
+                />
+              </div>
             )}
             <div className="p-3 bg-slate-900/90 flex justify-between items-center text-[10px] uppercase tracking-tighter">
-              <span className="text-indigo-400 font-bold">{img.type.replace('_', ' ')}</span>
+              <span className="text-indigo-400 font-bold">
+                {img.type.replace('_', ' ')}
+                {lockedUrl && img.url === lockedUrl ? ' · CANON' : ''}
+              </span>
               <div className="flex gap-2">
+                {onLockCanon && img.status === 'done' && img.url && (
+                  <button
+                    onClick={() => onLockCanon(img)}
+                    className={`transition-colors ${lockedUrl && img.url === lockedUrl ? 'text-emerald-400' : 'text-slate-500 hover:text-emerald-400'}`}
+                    title={lockLabel}
+                  >
+                    <i className="fas fa-lock"></i>
+                  </button>
+                )}
+                {onVerdict && img.status === 'done' && img.url && (
+                  <>
+                    <button
+                      onClick={() => onVerdict(img.id, 'approved')}
+                      className={`transition-colors ${img.verdict === 'approved' ? 'text-emerald-400' : 'text-slate-500 hover:text-emerald-400'}`}
+                      title="Approve as canon"
+                    >
+                      <i className="fas fa-check"></i>
+                    </button>
+                    <button
+                      onClick={() => onVerdict(img.id, 'rejected')}
+                      className={`transition-colors ${img.verdict === 'rejected' ? 'text-red-400' : 'text-slate-500 hover:text-red-400'}`}
+                      title="Reject"
+                    >
+                      <i className="fas fa-xmark"></i>
+                    </button>
+                  </>
+                )}
                 <button
                   disabled={img.status === 'pending' || !img.promptUsed}
                   onClick={() => setExpandedPrompt(expandedPrompt === img.id ? null : img.id)}
@@ -472,6 +653,8 @@ const App: React.FC = () => {
   const [providerConfig, setProviderConfigState] = useState<ProviderConfig>({ provider: 'xai', model: 'grok-imagine-image' });
   const [availableModels, setAvailableModels] = useState<{ gemini: {id:string;name:string}[]; venice: {id:string;name:string}[]; aws: {id:string;name:string}[]; xai: {id:string;name:string}[] }>({ gemini: [], venice: [], aws: [], xai: [] });
   const [localSdAvailable, setLocalSdAvailable] = useState(false);
+  const [ollamaAvailable, setOllamaAvailable] = useState(false);
+  const [providerHealth, setProviderHealth] = useState<Record<string, { configured?: boolean; available?: boolean; note?: string }>>({});
 
   const fetchModels = useCallback((creds?: any) => {
     fetch('/api/models', {
@@ -514,17 +697,19 @@ const App: React.FC = () => {
   }, [providerConfig.provider, awsCredentials]);
 
   useEffect(() => {
-    const checkLocalSd = () => {
-      fetch('/api/local-sd-status')
+    const checkHealth = () => {
+      fetch('/api/health')
         .then((r) => r.json())
         .then((data) => {
-          setLocalSdAvailable(Boolean(data?.available));
+          setProviderHealth(data.providers || {});
+          setLocalSdAvailable(Boolean(data.providers?.['local-sd']?.available));
+          setOllamaAvailable(Boolean(data.providers?.['local-llm']?.available));
         })
         .catch(() => {});
     };
 
-    checkLocalSd();
-    const intervalId = window.setInterval(checkLocalSd, 5000);
+    checkHealth();
+    const intervalId = window.setInterval(checkHealth, 8000);
     return () => window.clearInterval(intervalId);
   }, []);
 
@@ -536,11 +721,15 @@ const App: React.FC = () => {
     isGenerating: false,
     statusMessage: '',
   });
+  const [lastFailure, setLastFailure] = useState<string>('');
   const [activeImageRenders, setActiveImageRenders] = useState(0);
   const activeImageRendersRef = useRef(0);
   const [isVideoGenerating, setIsVideoGenerating] = useState<boolean>(false);
   const [isCanonDialogOpen, setIsCanonDialogOpen] = useState(false);
   const skipDialogRef = useRef(false);
+  const canonFaceUrlRef = useRef<string | undefined>(undefined);
+  const canonWideUrlRef = useRef<string | undefined>(undefined);
+  const canonMediumUrlRef = useRef<string | undefined>(undefined);
   const [toastState, setToastState] = useState<ToastState>({
     message: '',
     type: 'success',
@@ -550,6 +739,15 @@ const App: React.FC = () => {
   const hideToast = useCallback(() => {
     setToastState((prev) => ({ ...prev, visible: false }));
   }, []);
+
+  useEffect(() => {
+    canonFaceUrlRef.current = charProfile.canonHeadshotUrl;
+  }, [charProfile.canonHeadshotUrl]);
+
+  useEffect(() => {
+    canonWideUrlRef.current = setProfile.canonWideUrl;
+    canonMediumUrlRef.current = setProfile.canonMediumUrl;
+  }, [setProfile.canonWideUrl, setProfile.canonMediumUrl]);
 
   useEffect(() => {
     // Load saved data on mount
@@ -634,7 +832,7 @@ const App: React.FC = () => {
     forgeType: AppTab,
     skipHeadshotDialog = false
   ): Promise<{ success: boolean; imageId?: string }> => {
-    if (type === 'HEADSHOT' && forgeType === 'CharacterForge' && !skipDialogRef.current && !skipHeadshotDialog) {
+    if (type === 'HEADSHOT' && forgeType === 'CharacterForge' && !skipDialogRef.current && !skipHeadshotDialog && !canonFaceUrlRef.current) {
       setIsCanonDialogOpen(true);
       return Promise.resolve({ success: false });
     }
@@ -642,6 +840,45 @@ const App: React.FC = () => {
     if (providerConfig.provider === 'aws' && !awsCredentials) {
       setIsAwsDialogOpen(true);
       return Promise.resolve({ success: false });
+    }
+
+    if (
+      forgeType === 'CharacterForge' &&
+      requiresCanonFace(type) &&
+      !canonFaceUrlRef.current
+    ) {
+      setToastState({
+        message: 'Lock a canon face first. Generate a headshot and keep it.',
+        type: 'info',
+        visible: true,
+      });
+      return Promise.resolve({ success: false });
+    }
+
+    if (
+      forgeType === 'SetForge' &&
+      type !== 'WIDE' &&
+      !canonWideUrlRef.current
+    ) {
+      setToastState({
+        message: 'Lock a wide shot first. Coverage starts with WIDE.',
+        type: 'info',
+        visible: true,
+      });
+      return Promise.resolve({ success: false });
+    }
+
+    if (
+      forgeType === 'CharacterForge' &&
+      requiresCanonFace(type) &&
+      charProfile.canonHeadshotUrl &&
+      providerConfig.provider === 'venice'
+    ) {
+      setToastState({
+        message: 'Venice cannot attach the canon face. Identity is prompt-only on this provider.',
+        type: 'info',
+        visible: true,
+      });
     }
 
     if (skipHeadshotDialog) {
@@ -698,12 +935,18 @@ const App: React.FC = () => {
       void (async () => {
         let success = false;
       try {
+        const liveChar = { ...charProfile, canonHeadshotUrl: canonFaceUrlRef.current };
+        const liveSet = {
+          ...setProfile,
+          canonWideUrl: canonWideUrlRef.current,
+          canonMediumUrl: canonMediumUrlRef.current,
+        };
         const result =
           forgeType === 'CharacterForge'
-            ? await generateGeminiCharacterImage(charProfile, type as ReferenceType, awsCredentials)
+            ? await generateGeminiCharacterImage(liveChar, type as ReferenceType, awsCredentials)
             : forgeType === 'SetForge'
-              ? await generateGeminiSetImage(setProfile, type as SetReferenceType, awsCredentials)
-              : await generateGeminiCompositeImage(charProfile, setProfile, compConfig, awsCredentials);
+              ? await generateGeminiSetImage(liveSet, type as SetReferenceType, awsCredentials)
+              : await generateGeminiCompositeImage(liveChar, liveSet, compConfig, awsCredentials);
 
         updateRef({
           url: result.url,
@@ -711,14 +954,44 @@ const App: React.FC = () => {
           status: 'done',
         });
         success = true;
+        setLastFailure('');
+        const autoLock = pickAutoLockPatch(forgeType, type, result.url);
+        if (autoLock) {
+          if ('canonHeadshotUrl' in autoLock) {
+            if (!canonFaceUrlRef.current) {
+              canonFaceUrlRef.current = result.url;
+              setCharProfile((prev) => prev.canonHeadshotUrl ? prev : { ...prev, canonHeadshotUrl: result.url });
+              setToastState({ message: 'Canon face locked from this headshot.', type: 'success', visible: true });
+            }
+          } else {
+            if (autoLock.canonWideUrl && !canonWideUrlRef.current) {
+              canonWideUrlRef.current = autoLock.canonWideUrl;
+            }
+            if (autoLock.canonMediumUrl && !canonMediumUrlRef.current) {
+              canonMediumUrlRef.current = autoLock.canonMediumUrl;
+            }
+            setSetProfile((prev) => {
+              const next = { ...prev };
+              if (autoLock.canonWideUrl && !prev.canonWideUrl) next.canonWideUrl = autoLock.canonWideUrl;
+              if (autoLock.canonMediumUrl && !prev.canonMediumUrl) next.canonMediumUrl = autoLock.canonMediumUrl;
+              return next;
+            });
+          }
+        }
       } catch (e: any) {
         const message = e.message || 'An unknown error occurred';
         if (message === 'AUTH_REQUIRED') {
           if (providerConfig.provider === 'aws') {
             setIsAwsDialogOpen(true);
           } else {
+            const authHints: Record<string, string> = {
+              xai: 'xAI key missing or invalid. Set XAI_API_KEY in .env.',
+              venice: 'Venice key invalid. Update VENICE_API_KEY — the API reloads .env automatically.',
+              gemini: 'Gemini key missing or invalid. Set GEMINI_API_KEY in .env.',
+              'local-llm': 'Local LLM is offline. Start Ollama / A1111.',
+            };
             setToastState({
-              message: 'API key missing or invalid for this provider.',
+              message: authHints[providerConfig.provider] || 'API key missing or invalid for this provider.',
               type: 'error',
               visible: true,
             });
@@ -726,6 +999,7 @@ const App: React.FC = () => {
         }
         updateRef({ status: 'error', error: message });
         setGenState((prev) => ({ ...prev, error: message }));
+        setLastFailure(message);
       } finally {
         activeImageRendersRef.current = Math.max(0, activeImageRendersRef.current - 1);
         setActiveImageRenders(activeImageRendersRef.current);
@@ -743,6 +1017,80 @@ const App: React.FC = () => {
     if (forgeType === 'CharacterForge') setCharRefs((prev) => prev.filter((img) => img.id !== id));
     else if (forgeType === 'SetForge') setSetRefs((prev) => prev.filter((img) => img.id !== id));
     else setCompRefs((prev) => prev.filter((img) => img.id !== id));
+  };
+
+  const handleSetVerdict = (forgeType: AppTab, id: string, verdict: 'approved' | 'rejected') => {
+    const source = forgeType === 'CharacterForge' ? charRefs : forgeType === 'SetForge' ? setRefs : compRefs;
+    const img = source.find((item) => item.id === id);
+    const updater = (prev: ReferenceImage[]) =>
+      prev.map((item) => (item.id === id ? { ...item, verdict: item.verdict === verdict ? undefined : verdict } : item));
+    if (forgeType === 'CharacterForge') setCharRefs(updater);
+    else if (forgeType === 'SetForge') setSetRefs(updater);
+    else setCompRefs(updater);
+
+    if (verdict === 'approved' && img?.url && img.verdict !== 'approved') {
+      const autoLock = pickAutoLockPatch(forgeType, img.type, img.url);
+      if (autoLock && 'canonHeadshotUrl' in autoLock) {
+        canonFaceUrlRef.current = img.url;
+        setCharProfile((prev) => ({ ...prev, canonHeadshotUrl: img.url }));
+        setToastState({ message: 'Canon face locked.', type: 'success', visible: true });
+      } else if (autoLock) {
+        if (autoLock.canonWideUrl) canonWideUrlRef.current = autoLock.canonWideUrl;
+        if (autoLock.canonMediumUrl) canonMediumUrlRef.current = autoLock.canonMediumUrl;
+        setSetProfile((prev) => ({ ...prev, ...autoLock }));
+      }
+    }
+  };
+
+  const handleLockCanonStill = (forgeType: AppTab, img: ReferenceImage) => {
+    if (!img.url) return;
+    if (forgeType === 'CharacterForge') {
+      canonFaceUrlRef.current = img.url;
+      setCharProfile((prev) => ({ ...prev, canonHeadshotUrl: img.url }));
+      setCharRefs((prev) => prev.map((item) => item.id === img.id ? { ...item, verdict: 'approved' } : item));
+      setToastState({ message: 'Canon face locked.', type: 'success', visible: true });
+      return;
+    }
+    if (img.type === 'WIDE') {
+      canonWideUrlRef.current = img.url;
+      setSetProfile((prev) => ({ ...prev, canonWideUrl: img.url }));
+    } else if (img.type === 'MEDIUM') {
+      canonMediumUrlRef.current = img.url;
+      setSetProfile((prev) => ({ ...prev, canonMediumUrl: img.url }));
+    } else {
+      if (!canonWideUrlRef.current) canonWideUrlRef.current = img.url;
+      setSetProfile((prev) => ({ ...prev, canonWideUrl: prev.canonWideUrl || img.url }));
+    }
+    setSetRefs((prev) => prev.map((item) => item.id === img.id ? { ...item, verdict: 'approved' } : item));
+    setToastState({ message: 'Set coverage locked.', type: 'success', visible: true });
+  };
+
+  const handleSendApprovedToScene = () => {
+    const approved = compRefs.filter((img) => img.verdict === 'approved' && img.status === 'done' && img.url && img.compositorSpec);
+    if (!approved.length) {
+      setToastState({
+        message: 'Approve compositor stills first, then send them to Scene.',
+        type: 'info',
+        visible: true,
+      });
+      return;
+    }
+    const stills: SceneSeedStill[] = approved.map((image) => ({
+      id: image.id,
+      url: image.url,
+      promptUsed: image.promptUsed,
+      timestamp: image.timestamp,
+      compositorSpec: image.compositorSpec!,
+    }));
+    setSceneSeedStills((prev) => {
+      const merged = [...stills, ...prev.filter((s) => !stills.some((n) => n.id === s.id))];
+      return merged.slice(0, 8);
+    });
+    setToastState({
+      message: `Added ${stills.length} approved still${stills.length === 1 ? '' : 's'} to Scene queue.`,
+      type: 'success',
+      visible: true,
+    });
   };
 
   const handleRetryRef = (forgeType: AppTab, image: ReferenceImage) => {
@@ -876,40 +1224,50 @@ const App: React.FC = () => {
       };
       setVideoClips(prev => [clip, ...prev]);
     } catch (e: any) {
-      setGenState((prev) => ({ ...prev, error: e.message || 'Video generation failed.' }));
+      const message = e.message || 'Video generation failed.';
+      setGenState((prev) => ({ ...prev, error: message }));
+      setLastFailure(message);
     } finally {
       setIsVideoGenerating(false);
     }
   };
 
+  const requestGeneratedText = useCallback(async (prompt: string) => {
+    const res = await fetch('/api/generate-text', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt,
+        provider: providerConfig.provider,
+        model: providerConfig.model,
+      }),
+    });
+    if (!res.ok) throw new Error('LLM_ERROR');
+    const data = await res.json();
+    if (!data?.text) throw new Error('NO_RESULT');
+    return String(data.text);
+  }, [providerConfig.model, providerConfig.provider]);
+
   const handleLlmGen = async () => {
-    setGenState({ isGenerating: true, statusMessage: 'Consulting local oracle...' });
+    setGenState({ isGenerating: true, statusMessage: 'Forging a new man...' });
     try {
-      const prompt = `Generate a unique character profile for an "Urban Spiritual Realism" setting. 
-      Return only a JSON object with the following fields: 
-      name, age, gender (Male/Female/Non-binary/Androgynous), build, eyes, hair, skinTone, distinctiveFeatures, wardrobe, personality, backstory.
-      Make it gritty, cinematic, and detailed.`;
-      
-      const res = await fetch('/api/generate-text', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
-      });
-      
-      if (!res.ok) throw new Error('LLM_ERROR');
-      const data = await res.json();
-      
-      const cleanJson = data.text.match(/\{[\s\S]*\}/)?.[0] || data.text;
-      const profile = JSON.parse(cleanJson);
-      
-      setCharProfile(prev => ({
-        ...prev,
-        ...profile,
-        id: generateId(),
-        seed: generateSeed()
-      }));
+      const prompt = `Invent a completely new adult male character for an "Urban Spiritual Realism" production bible.
+Hard rule: the character is ALWAYS a man. gender must be exactly "Male". Never a woman, non-binary, or androgynous.
+Randomize EVERY other field from scratch. Do not reuse stock names (Adrian Vale, Micah Stone, Rian Calder, Noah Archer, Elias Ward) or copy a previous character.
+Vary age, ethnicity and skin tone, body type, hair, facial structure, wardrobe, class, and temperament so successive calls feel like different people.
+Return only a JSON object with these fields:
+name, age, gender, build, eyes, hair, skinTone, distinctiveFeatures, wardrobe, personality, backstory, aesthetic,
+undergarmentType (one of: None, Minimal briefs, Boxer briefs, Boxers, Compression shorts, Dance belt, Bodysuit),
+undergarmentFit (one of: Standard, Tight, Loose, High-cut, Low-rise, High-waist; empty string if undergarmentType is None),
+undergarmentStyle (one of: Neutral, Matte black, Charcoal grey, Skin-tone, White cotton, Muted earth tones, Minimal seams; empty string if undergarmentType is None).
+Make it gritty, cinematic, and specific. distinctiveFeatures should be visual identity locks (scars, bone landmarks, hairline, facial hair).`;
+
+      const text = await requestGeneratedText(prompt);
+      const generated = parseJsonObject(text);
+      setCharProfile(characterFromLlmJson(generated));
       setCharRefs([]);
-      setToastState({ message: 'Character forged by local LLM.', type: 'success', visible: true });
+      canonFaceUrlRef.current = undefined;
+      setToastState({ message: 'Character forged by selected LLM.', type: 'success', visible: true });
     } catch (e: any) {
       console.error('LLM Gen failed:', e);
       setToastState({ message: 'LLM generation failed. falling back to randomized presets.', type: 'info', visible: true });
@@ -924,8 +1282,9 @@ const App: React.FC = () => {
     const undergarmentType = pick([
       'Minimal briefs',
       'Boxer briefs',
+      'Boxers',
       'Compression shorts',
-      'Sports bra + briefs',
+      'Dance belt',
       'None',
     ]);
     const undergarmentFit =
@@ -986,6 +1345,7 @@ const App: React.FC = () => {
     setCharProfile({
       ...charProfile,
       seed: generateSeed(),
+      gender: 'Male',
       name: pick(names),
       age: pick(['24', '27', '31', '36', '41']),
       build: pick(builds),
@@ -1000,8 +1360,10 @@ const App: React.FC = () => {
       undergarmentType,
       undergarmentFit,
       undergarmentStyle,
+      canonHeadshotUrl: undefined,
     });
     setCharRefs([]);
+    canonFaceUrlRef.current = undefined;
   };
 
   const handleCopyPrompt = useCallback((type: string, context: 'CharacterForge' | 'SetForge') => {
@@ -1011,7 +1373,7 @@ const App: React.FC = () => {
     handleCopyToClipboard(prompt);
   }, [charProfile, setProfile, handleCopyToClipboard]);
 
-  const randomizeSet = () => {
+  const applyRandomSetPresets = () => {
     const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
     const types = {
       Indoor: [
@@ -1077,8 +1439,58 @@ const App: React.FC = () => {
       fixedLandmarks: pick(fixedLandmarks),
       forbiddenChanges: pick(forbiddenChanges),
       lightingRigLock: pick(lightingRigLock),
+      canonWideUrl: undefined,
+      canonMediumUrl: undefined,
     });
     setSetRefs([]);
+    canonWideUrlRef.current = undefined;
+    canonMediumUrlRef.current = undefined;
+  };
+
+  const handleRandomizeSet = async () => {
+    setGenState({ isGenerating: true, statusMessage: 'Inventing a unique set...' });
+    try {
+      const prompt = `Invent a unique cinematic location for an "Urban Spiritual Realism" production bible.
+Return only a JSON object with these fields:
+name, locationType ("Indoor" or "Outdoor"), lighting, ambiance, style, details, spatialInvariants, fixedLandmarks, forbiddenChanges, lightingRigLock.
+Requirements:
+- Do not reuse generic stock names (no Neon Cyber-Cafe, Subterranean Shrine, Luxury Sky-Loft, Ritual Rooftop).
+- spatialInvariants, fixedLandmarks, forbiddenChanges, and lightingRigLock must be specific to THIS set so later image renders stay geometrically consistent.
+- details should mention materials, weather/atmosphere, and distinctive props.
+- lightingRigLock should read like a cinematography note (key/fill/rim/practicals).
+Current locationType preference: ${setProfile.locationType}. You may keep or change it if the concept is stronger the other way.`;
+
+      const text = await requestGeneratedText(prompt);
+      const generated = parseJsonObject(text);
+      const locationType =
+        generated.locationType === 'Outdoor' || generated.locationType === 'Indoor'
+          ? generated.locationType
+          : setProfile.locationType;
+
+      setSetProfile({
+        ...setProfile,
+        ...generated,
+        locationType,
+        id: generateId(),
+        seed: generateSeed(),
+        canonWideUrl: undefined,
+        canonMediumUrl: undefined,
+      });
+      setSetRefs([]);
+      canonWideUrlRef.current = undefined;
+      canonMediumUrlRef.current = undefined;
+      setToastState({ message: 'Set invented by selected LLM.', type: 'success', visible: true });
+    } catch (e) {
+      console.error('Set LLM gen failed:', e);
+      setToastState({
+        message: 'LLM set generation failed. Falling back to presets.',
+        type: 'info',
+        visible: true,
+      });
+      applyRandomSetPresets();
+    } finally {
+      setGenState({ isGenerating: false, statusMessage: '' });
+    }
   };
 
   const randomizeComp = () => {
@@ -1104,92 +1516,117 @@ const App: React.FC = () => {
     });
   };
 
+  const canonProgress = getCanonProgress(charProfile, setProfile, setRefs, compRefs);
+  const lockReady = canonProgress.hasFace && canonProgress.hasSet && canonProgress.hasCoverage;
+
+  const handleNextCanon = (action: CanonNextAction) => {
+    setActiveTab(action.tab);
+    if (action.kind === 'forge-character') void handleLlmGen();
+    else if (action.kind === 'headshot') handleGen('HEADSHOT', 'CharacterForge');
+    else if (action.kind === 'forge-set') void handleRandomizeSet();
+    else if (action.kind === 'set-coverage') {
+      handleGen(canonProgress.hasWide ? 'MEDIUM' : 'WIDE', 'SetForge');
+    } else if (action.kind === 'composite') {
+      if (lockReady) handleGen('CINEMATIC_COMPOSITE', 'CompositorForge');
+    }
+  };
+
+  const providerOnline = (id: string) => {
+    if (id === 'local-llm') return localSdAvailable || ollamaAvailable;
+    if (id === 'aws') return true;
+    return providerHealth[id]?.configured !== false;
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
       {toastState.visible && (
         <Toast message={toastState.message} type={toastState.type} onClose={hideToast} />
       )}
       <header className="bg-slate-950/80 backdrop-blur border-b border-slate-800 p-4 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="flex items-center gap-3">
-            <div className="bg-indigo-600 p-2 rounded-lg">
-              <i className="fas fa-microchip"></i>
+        <div className="max-w-7xl mx-auto flex flex-col gap-4">
+          <div className="flex flex-col md:flex-row justify-between items-center gap-3">
+            <div className="flex items-center gap-3">
+              <div className="bg-indigo-600 p-2 rounded-lg">
+                <i className="fas fa-microchip"></i>
+              </div>
+              <div>
+                <h1 className="text-xl font-bold aesthetic-font leading-none">
+                  CANON<span className="text-indigo-500">FORGE</span>
+                </h1>
+                <p className="text-[10px] text-slate-500 mt-1">Lock a face, then a place, then a shot.</p>
+              </div>
             </div>
-            <h1 className="text-xl font-bold aesthetic-font">
-              CANON<span className="text-indigo-500">FORGE</span>
-            </h1>
-          </div>
 
-          <nav className="flex bg-slate-900 rounded-xl p-1">
-            {(['CharacterForge', 'SetForge', 'CompositorForge', 'SceneForge'] as AppTab[]).map((t) => (
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              <div className="flex items-center gap-1 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1">
+                <span className={`w-1.5 h-1.5 rounded-full ${providerOnline(providerConfig.provider) ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
+                <select
+                  value={providerConfig.provider}
+                  onChange={e => {
+                    const p = e.target.value as 'gemini' | 'venice' | 'aws' | 'xai' | 'local-llm';
+                    const defaultModel = p === 'gemini'
+                      ? (availableModels.gemini[0]?.id || 'gemini-3-pro-image-preview')
+                      : p === 'venice'
+                      ? (availableModels.venice[0]?.id || 'flux-dev-uncensored')
+                      : p === 'aws'
+                      ? (availableModels.aws[0]?.id || 'amazon.titan-image-generator-v2:0')
+                      : p === 'xai'
+                      ? (availableModels.xai[0]?.id || 'grok-imagine-image')
+                      : 'local-llm';
+                    setProviderConfigState({ provider: p, model: defaultModel });
+                  }}
+                  className="bg-transparent text-[10px] uppercase tracking-widest text-indigo-400 font-bold focus:outline-none cursor-pointer"
+                >
+                  <option value="gemini" disabled={providerHealth.gemini?.configured === false}>Gemini</option>
+                  <option value="venice" disabled={providerHealth.venice?.configured === false}>Venice</option>
+                  <option value="aws">AWS</option>
+                  <option value="xai" disabled={providerHealth.xai?.configured === false}>xAI</option>
+                  <option value="local-llm" disabled={Boolean(providerHealth['local-llm']) && !localSdAvailable && !ollamaAvailable}>Local LLM</option>
+                </select>
+                {providerConfig.provider !== 'local-llm' && (
+                  <>
+                    <span className="text-slate-600">|</span>
+                    <select
+                      value={providerConfig.model}
+                      onChange={e => setProviderConfigState({ ...providerConfig, model: e.target.value })}
+                      className="bg-transparent text-[10px] text-slate-300 focus:outline-none cursor-pointer max-w-[140px]"
+                    >
+                      {(providerConfig.provider === 'gemini'
+                        ? availableModels.gemini
+                        : providerConfig.provider === 'venice'
+                        ? availableModels.venice
+                        : providerConfig.provider === 'aws'
+                        ? availableModels.aws
+                        : availableModels.xai).map(m => (
+                        <option key={m.id} value={m.id}>{m.name}</option>
+                      ))}
+                    </select>
+                  </>
+                )}
+                {providerConfig.provider === 'local-llm' && (
+                  <span className={`text-[10px] font-mono ${localSdAvailable || ollamaAvailable ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {localSdAvailable ? 'sd online' : ollamaAvailable ? 'ollama only' : 'offline'}
+                  </span>
+                )}
+              </div>
               <button
-                key={t}
-                onClick={() => setActiveTab(t)}
-                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === t ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
+                onClick={() => save(activeTab === 'SetForge' ? 'set' : 'char')}
+                className="text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-700 transition-colors"
               >
-                {t.replace('Forge', '')}
+                Save
               </button>
-            ))}
-          </nav>
-
-          <div className="flex items-center gap-2 flex-wrap justify-end">
-            <div className="flex items-center gap-1 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1">
-              <select
-                value={providerConfig.provider}
-                onChange={e => {
-                  const p = e.target.value as 'gemini' | 'venice' | 'aws' | 'xai' | 'local-llm';
-                  const defaultModel = p === 'gemini'
-                    ? (availableModels.gemini[0]?.id || 'gemini-3-pro-image-preview')
-                    : p === 'venice'
-                    ? (availableModels.venice[0]?.id || 'flux-dev-uncensored')
-                    : p === 'aws'
-                    ? (availableModels.aws[0]?.id || 'amazon.titan-image-generator-v2:0')
-                    : p === 'xai'
-                    ? (availableModels.xai[0]?.id || 'grok-imagine-image')
-                    : 'local-llm';
-                  setProviderConfigState({ provider: p, model: defaultModel });
-                }}
-                className="bg-transparent text-[10px] uppercase tracking-widest text-indigo-400 font-bold focus:outline-none cursor-pointer"
-              >
-                <option value="gemini">Gemini</option>
-                <option value="venice">Venice</option>
-                <option value="aws">AWS</option>
-                <option value="xai">xAI</option>
-                <option value="local-llm">Local LLM</option>
-              </select>
-              {providerConfig.provider !== 'local-llm' && (
-                <>
-                  <span className="text-slate-600">|</span>
-                  <select
-                    value={providerConfig.model}
-                    onChange={e => setProviderConfigState({ ...providerConfig, model: e.target.value })}
-                    className="bg-transparent text-[10px] text-slate-300 focus:outline-none cursor-pointer max-w-[140px]"
-                  >
-                    {(providerConfig.provider === 'gemini'
-                      ? availableModels.gemini
-                      : providerConfig.provider === 'venice'
-                      ? availableModels.venice
-                      : providerConfig.provider === 'aws'
-                      ? availableModels.aws
-                      : availableModels.xai).map(m => (
-                      <option key={m.id} value={m.id}>{m.name}</option>
-                    ))}
-                  </select>
-                </>
-              )}
-              {providerConfig.provider === 'local-llm' && (
-                <span className={`text-[10px] font-mono ${localSdAvailable ? 'text-emerald-400' : 'text-amber-400'}`}>
-                  {localSdAvailable ? 'online' : 'offline'}
-                </span>
-              )}
             </div>
-            <button
-              onClick={() => save(activeTab === 'SetForge' ? 'set' : 'char')}
-              className="text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-700 transition-colors"
-            >
-              <i className="fas fa-floppy-disk mr-2"></i> Save Current
-            </button>
           </div>
+          <CanonChecklist
+            charProfile={charProfile}
+            setProfile={setProfile}
+            setRefs={setRefs}
+            compRefs={compRefs}
+            activeTab={activeTab}
+            busy={genState.isGenerating || activeImageRenders > 0}
+            onGo={setActiveTab}
+            onNext={handleNextCanon}
+          />
         </div>
       </header>
 
@@ -1200,15 +1637,16 @@ const App: React.FC = () => {
             <div className="lg:col-span-4 bg-slate-900/40 border border-slate-800 rounded-2xl p-6 h-fit shadow-xl">
               <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-2">
                 <h2 className="font-bold text-sm uppercase text-slate-400 tracking-widest">
-                  Character Profile
+                  {charProfile.name || 'New character'}
                 </h2>
                 <span className="text-[10px] text-indigo-400 font-mono">
-                  SEED: {charProfile.seed}
+                  SEED {charProfile.seed}
                 </span>
               </div>
               <CharacterForm
                 profile={charProfile}
                 setProfile={setCharProfile}
+                isGenerating={genState.isGenerating}
                 onLoadPersonalStarter={() => {
                   setCharProfile(personalStarter || buildPersonalStarter(charProfile));
                   setCharRefs([]);
@@ -1224,22 +1662,25 @@ const App: React.FC = () => {
             </div>
             <div className="lg:col-span-8 space-y-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <h2 className="text-xl font-bold aesthetic-font">Reference Vault</h2>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={saveCurrentAsPersonalStarter}
-                    className="text-[10px] uppercase tracking-widest bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/30 px-3 py-1.5 rounded-lg"
-                  >
-                    <i className="fas fa-bookmark mr-1"></i> Save As Personal Starter
-                  </button>
-                  <button
-                    onClick={() => void runConsistencyStressTest()}
-                    disabled={activeImageRenders > 0}
-                    className="text-[10px] uppercase tracking-widest bg-indigo-600/20 hover:bg-indigo-600/35 text-indigo-300 border border-indigo-500/30 px-3 py-1.5 rounded-lg disabled:opacity-40"
-                  >
-                    <i className="fas fa-vials mr-1"></i> Run Consistency Test
-                  </button>
-                </div>
+                <h2 className="text-xl font-bold aesthetic-font">Face & body vault</h2>
+                <details className="text-[10px] uppercase tracking-widest">
+                  <summary className="cursor-pointer text-slate-500 hover:text-slate-300">Tools</summary>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      onClick={saveCurrentAsPersonalStarter}
+                      className="bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/30 px-3 py-1.5 rounded-lg"
+                    >
+                      Save as personal starter
+                    </button>
+                    <button
+                      onClick={() => void runConsistencyStressTest()}
+                      disabled={activeImageRenders > 0}
+                      className="bg-indigo-600/20 hover:bg-indigo-600/35 text-indigo-300 border border-indigo-500/30 px-3 py-1.5 rounded-lg disabled:opacity-40"
+                    >
+                      Consistency test
+                    </button>
+                  </div>
+                </details>
               </div>
 
               {consistencyReport.length > 0 && (
@@ -1294,15 +1735,21 @@ const App: React.FC = () => {
                 onDelete={(id) => handleDeleteRef('CharacterForge', id)}
                 onRetry={(img) => handleRetryRef('CharacterForge', img)}
                 onCopyPrompt={(t) => handleCopyPrompt(t, 'CharacterForge')}
+                onVerdict={(id, verdict) => handleSetVerdict('CharacterForge', id, verdict)}
+                onLockCanon={(img) => handleLockCanonStill('CharacterForge', img)}
+                lockedUrl={charProfile.canonHeadshotUrl}
+                lockLabel="Lock as canon face"
                 disableGenerate={activeImageRenders >= MAX_CONCURRENT_IMAGE_RENDERS}
                 activeCount={activeImageRenders}
+                primaryTypes={charProfile.canonHeadshotUrl ? ['HEADSHOT', 'WARDROBE', 'BODY_REVERSE'] : ['HEADSHOT']}
+                emptyHint="Generate a headshot. The first successful one locks this face."
                 types={[
                   { type: 'HEADSHOT', label: 'Headshot', icon: 'fa-user-circle' },
-                  { type: 'BODY_REVERSE', label: 'Anatomical (3 Poses)', icon: 'fa-street-view' },
-                  { type: 'BODY_NUDE_FRONT', label: 'Nude Front', icon: 'fa-person' },
-                  { type: 'BODY_NUDE_THREE_QUARTER', label: 'Nude 3/4', icon: 'fa-person-rays' },
-                  { type: 'BODY_NUDE_PROFILE', label: 'Nude Profile', icon: 'fa-person-half-dress' },
-                  { type: 'BODY_NUDE_BACK', label: 'Nude Back', icon: 'fa-person-walking' },
+                  { type: 'BODY_REVERSE', label: 'Anatomy sheet', icon: 'fa-street-view' },
+                  { type: 'BODY_NUDE_FRONT', label: 'Figure front', icon: 'fa-person' },
+                  { type: 'BODY_NUDE_THREE_QUARTER', label: 'Figure 3/4', icon: 'fa-person-rays' },
+                  { type: 'BODY_NUDE_PROFILE', label: 'Figure profile', icon: 'fa-person-half-dress' },
+                  { type: 'BODY_NUDE_BACK', label: 'Figure back', icon: 'fa-person-walking' },
                   { type: 'NEUTRAL_SHEET', label: 'Neutral Studio', icon: 'fa-table-cells' },
                   { type: 'WARDROBE', label: 'Wardrobe', icon: 'fa-shirt' },
                   { type: 'ACTION', label: 'Action Pose', icon: 'fa-person-running' },
@@ -1316,14 +1763,29 @@ const App: React.FC = () => {
             profile={charProfile}
             providerConfig={providerConfig}
             onApprove={(url) => {
+              canonFaceUrlRef.current = url;
               setCharProfile({ ...charProfile, canonHeadshotUrl: url });
+              setCharRefs((prev) => [
+                {
+                  id: generateId(),
+                  type: 'HEADSHOT',
+                  url,
+                  promptUsed: 'Canon face lock',
+                  timestamp: Date.now(),
+                  status: 'done',
+                  verdict: 'approved',
+                },
+                ...prev,
+              ]);
               setIsCanonDialogOpen(false);
+              setToastState({ message: 'Canon face locked.', type: 'success', visible: true });
             }}
-            onSkip={() => {
+            onGenerateFromDescription={() => {
               setIsCanonDialogOpen(false);
               skipDialogRef.current = true;
               handleGen('HEADSHOT', 'CharacterForge');
             }}
+            onClose={() => setIsCanonDialogOpen(false)}
           />
           </>
         )}
@@ -1333,10 +1795,10 @@ const App: React.FC = () => {
             <div className="lg:col-span-4 bg-slate-900/40 border border-slate-800 rounded-2xl p-6 h-fit space-y-4 shadow-xl">
               <div className="flex justify-between items-center border-b border-slate-800 pb-2">
                 <h2 className="font-bold text-sm uppercase text-slate-400 tracking-widest">
-                  Set Configuration
+                  {setProfile.name || 'New set'}
                 </h2>
                 <span className="text-[10px] text-indigo-400 font-mono">
-                  SEED: {setProfile.seed}
+                  SEED {setProfile.seed}
                 </span>
               </div>
               <div className="space-y-4">
@@ -1373,6 +1835,11 @@ const App: React.FC = () => {
                     onChange={(e) => setSetProfile({ ...setProfile, ambiance: e.target.value })}
                   />
                 </div>
+                <details className="group border border-slate-800 rounded-lg px-3 py-2">
+                  <summary className="cursor-pointer text-[10px] uppercase tracking-widest text-slate-500 group-open:text-slate-300">
+                    Spatial lock details
+                  </summary>
+                  <div className="mt-3 space-y-3">
                 <div>
                   <label className="text-[10px] text-slate-500 uppercase block mb-1">Lighting Rig Lock</label>
                   <textarea
@@ -1409,23 +1876,26 @@ const App: React.FC = () => {
                     placeholder="Describe what must never drift between renders"
                   />
                 </div>
+                  </div>
+                </details>
                 <button
-                  onClick={randomizeSet}
-                  className="w-full text-xs bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-400 py-2 rounded-lg border border-indigo-500/30 transition-all active:scale-95"
+                  onClick={() => void handleRandomizeSet()}
+                  disabled={genState.isGenerating}
+                  className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-2.5 rounded-xl font-bold text-sm disabled:opacity-40"
                 >
-                  <i className="fas fa-dice mr-2"></i> Randomize Set
+                  {genState.isGenerating ? 'Inventing set...' : 'Randomize Set'}
                 </button>
               </div>
             </div>
             <div className="lg:col-span-8 space-y-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <h2 className="text-xl font-bold aesthetic-font">Set Reference Vault</h2>
+                <h2 className="text-xl font-bold aesthetic-font">Set coverage</h2>
                 <button
                   onClick={() => void runSetCanonPack()}
-                  disabled={activeImageRenders > 0}
-                  className="text-[10px] uppercase tracking-widest bg-indigo-600/20 hover:bg-indigo-600/35 text-indigo-300 border border-indigo-500/30 px-3 py-1.5 rounded-lg disabled:opacity-40"
+                  disabled={activeImageRenders > 0 || !canonProgress.hasSet}
+                  className="text-[10px] uppercase tracking-widest text-slate-500 hover:text-indigo-300 disabled:opacity-40"
                 >
-                  <i className="fas fa-layer-group mr-1"></i> Run Set Canon Pack
+                  Full canon pack
                 </button>
               </div>
                <ReferenceGallery
@@ -1434,8 +1904,14 @@ const App: React.FC = () => {
                 onDelete={(id) => handleDeleteRef('SetForge', id)}
                 onRetry={(img) => handleRetryRef('SetForge', img)}
                 onCopyPrompt={(t) => handleCopyPrompt(t, 'SetForge')}
+                onVerdict={(id, verdict) => handleSetVerdict('SetForge', id, verdict)}
+                onLockCanon={(img) => handleLockCanonStill('SetForge', img)}
+                lockedUrl={setProfile.canonWideUrl || setProfile.canonMediumUrl}
+                lockLabel="Lock as set coverage"
                 disableGenerate={activeImageRenders >= MAX_CONCURRENT_IMAGE_RENDERS}
                 activeCount={activeImageRenders}
+                primaryTypes={['WIDE', 'MEDIUM']}
+                emptyHint="Wide then medium. The first wide locks the place."
                 types={[
                   { type: 'WIDE', label: 'Wide Shot', icon: 'fa-panorama' },
                   { type: 'MEDIUM', label: 'Medium/Acting Area', icon: 'fa-vector-square' },
@@ -1455,16 +1931,26 @@ const App: React.FC = () => {
               <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-6 space-y-4 shadow-xl">
                 <div className="flex justify-between items-center border-b border-slate-800 pb-2">
                   <h2 className="font-bold text-sm uppercase text-slate-400 tracking-widest">
-                    Compositor Forge
+                    Put them in the set
                   </h2>
                   <button
                     onClick={randomizeComp}
                     className="text-[10px] text-indigo-400 hover:text-indigo-300"
                     title="Randomize Action"
                   >
-                    <i className="fas fa-dice"></i>
+                    Shuffle action
                   </button>
                 </div>
+
+                <p className={`text-xs rounded-lg px-3 py-2 border ${
+                  lockReady
+                    ? 'border-emerald-500/30 text-emerald-300 bg-emerald-500/5'
+                    : 'border-amber-500/20 text-amber-300/90 bg-amber-500/5'
+                }`}>
+                  {lockReady
+                    ? `${charProfile.name} · ${setProfile.name}`
+                    : 'Need a locked face plus wide and medium set coverage first.'}
+                </p>
 
                 <div className="space-y-4">
                   <div>
@@ -1533,6 +2019,11 @@ const App: React.FC = () => {
                     />
                   </div>
 
+                  <details className="group border border-slate-800 rounded-lg px-3 py-2">
+                    <summary className="cursor-pointer text-[10px] uppercase tracking-widest text-slate-500 group-open:text-slate-300">
+                      Extra actors, camera, landmarks
+                    </summary>
+                    <div className="mt-3 space-y-3">
                   <div>
                     <label className="text-[10px] text-slate-500 uppercase block mb-1">
                       Extra Actors / Props
@@ -1620,11 +2111,20 @@ const App: React.FC = () => {
                       placeholder="What set landmarks must remain fixed in this shot"
                     />
                   </div>
+                    </div>
+                  </details>
 
+                  {canonProgress.hasComposite && (
                   <div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/50 px-3 py-2 text-[10px] uppercase tracking-widest">
                     <span className="text-slate-400">Scene Queue</span>
                     <div className="flex items-center gap-2">
                       <span className="text-emerald-300 font-mono">{sceneSeedStills.length} stills</span>
+                      <button
+                        onClick={handleSendApprovedToScene}
+                        className="text-indigo-300 hover:text-indigo-200"
+                      >
+                        Send approved
+                      </button>
                       <button
                         onClick={() => setActiveTab('SceneForge')}
                         className="text-emerald-300 hover:text-emerald-200"
@@ -1640,33 +2140,34 @@ const App: React.FC = () => {
                       </button>
                     </div>
                   </div>
+                  )}
 
                   <button
                     onClick={() => handleGen('CINEMATIC_COMPOSITE', 'CompositorForge')}
-                    disabled={activeImageRenders >= MAX_CONCURRENT_IMAGE_RENDERS}
+                    disabled={!lockReady || activeImageRenders >= MAX_CONCURRENT_IMAGE_RENDERS}
                     className="w-full bg-indigo-600 hover:bg-indigo-500 py-3 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/20 transition-all active:scale-95 disabled:opacity-50 text-white"
                   >
-                    <i className="fas fa-wand-magic-sparkles"></i> {activeImageRenders >= MAX_CONCURRENT_IMAGE_RENDERS ? 'Render Queue Full (3/3)' : 'Forge Canon Composite'}
+                    {activeImageRenders >= MAX_CONCURRENT_IMAGE_RENDERS
+                      ? 'Render queue full (3/3)'
+                      : lockReady
+                        ? 'Forge canon composite'
+                        : 'Lock face and coverage first'}
                   </button>
-                  <button
-                    onClick={handleGenVideo}
-                    disabled={isVideoGenerating}
-                    className="w-full bg-slate-800 hover:bg-slate-700 border border-indigo-500/30 hover:border-indigo-500/60 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50 text-white"
-                  >
-                    <i className="fas fa-film"></i> {isVideoGenerating ? 'Forging Video...' : 'Forge Video Clip'}
-                  </button>
-
-                  <div className="pt-2">
-                    <p className="text-[9px] text-slate-500 italic text-center">
-                      Identity Lock (Seed): {charProfile.seed}
-                    </p>
-                  </div>
+                  {canonProgress.hasComposite && (
+                    <button
+                      onClick={handleGenVideo}
+                      disabled={isVideoGenerating}
+                      className="w-full text-xs text-slate-500 hover:text-slate-300 py-2"
+                    >
+                      {isVideoGenerating ? 'Forging video...' : 'Later: video clip'}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
 
             <div className="lg:col-span-8 space-y-6">
-              <h2 className="text-xl font-bold aesthetic-font">Cinematic Archive</h2>
+              <h2 className="text-xl font-bold aesthetic-font">Canon stills</h2>
               <div className="grid grid-cols-1 gap-6">
                 {compRefs.map((img: ReferenceImage) => (
                   <CompositeResultCard
@@ -1737,6 +2238,7 @@ const App: React.FC = () => {
               providerConfig={providerConfig}
               seedStills={sceneSeedStills}
               onConsumeSeedStills={clearSceneSeedStills}
+              canonReady={canonProgress.hasComposite}
             />
           </div>
         )}
@@ -1768,22 +2270,26 @@ const App: React.FC = () => {
         </div>
       )}
 
-      <footer className="bg-slate-950 border-t border-slate-900 p-4 text-[9px] text-slate-600 uppercase tracking-widest flex justify-between">
-        <div className="flex gap-4">
-          <span className="flex items-center gap-2">
-            <span className={`w-1.5 h-1.5 rounded-full ${
-              providerConfig.provider === 'xai' ? 'bg-fuchsia-500 animate-pulse' :
-              providerConfig.provider === 'aws' ? 'bg-orange-500 animate-pulse' : 
-              providerConfig.provider === 'venice' ? 'bg-cyan-500' : 
-              providerConfig.provider === 'local-llm' ? 'bg-amber-500' :
-              'bg-green-500'
-            }`}></span> 
-            {providerConfig.provider.toUpperCase()} ENGINE
-          </span>
-          <span>Tab: {activeTab}</span>
+      <footer className="bg-slate-950 border-t border-slate-900 px-4 py-3 text-[10px] text-slate-500 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-3">
+          {(['xai', 'venice', 'gemini', 'aws', 'local-llm'] as const).map((id) => (
+            <span key={id} className="flex items-center gap-1.5 uppercase tracking-widest">
+              <span className={`w-1.5 h-1.5 rounded-full ${providerOnline(id) ? 'bg-emerald-500' : 'bg-slate-700'}`}></span>
+              {id === 'local-llm' ? 'local' : id}
+            </span>
+          ))}
         </div>
-        <div className="font-mono">
-          CanonID: {activeTab === 'SetForge' ? setProfile.id : charProfile.id}
+        <div className="flex items-center gap-3 min-w-0">
+          {lastFailure && (
+            <span className="text-amber-400/90 truncate max-w-[42ch]" title={lastFailure}>
+              Last fail: {lastFailure}
+            </span>
+          )}
+          <span className="font-mono text-slate-600 truncate">
+            {charProfile.name || 'unnamed'}
+            {canonProgress.hasFace ? ' · face locked' : ''}
+            {setProfile.name ? ` · ${setProfile.name}` : ''}
+          </span>
         </div>
       </footer>
 

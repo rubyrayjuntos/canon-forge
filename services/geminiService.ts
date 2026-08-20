@@ -1,6 +1,13 @@
 
 import { CharacterProfile, SetProfile, ReferenceType, SetReferenceType, CompositeConfig } from "../types";
 import { AESTHETIC_PROMPT_CORE, CHARACTER_TEMPLATES, SET_TEMPLATES } from "../constants";
+import {
+  buildCharacterIdentityBlock,
+  HEADSHOT_NEGATIVE_CONSTRAINTS,
+  setLockReferenceUrl,
+  shouldUseInitImage,
+  shotAspectRatio,
+} from "../utils/identityLock.js";
 
 interface GenerationResult {
   url: string;
@@ -30,38 +37,6 @@ function filled(value: any, fallback: string): string {
   return s ? s : fallback;
 }
 
-function buildCharacterIdentityBlock(profile: CharacterProfile): string {
-  const name = filled(profile.name, 'Unnamed Subject');
-  const age = filled(profile.age, '32');
-  const gender = filled(profile.gender, 'adult');
-  const build = filled(profile.build, 'athletic with natural proportions');
-  const skinTone = filled(profile.skinTone, 'medium skin tone with natural texture');
-  const eyes = filled(profile.eyes, 'dark brown');
-  const hair = filled(profile.hair, 'short textured hair');
-  const distinct = filled(
-    profile.distinctiveFeatures,
-    'defined jawline, subtle asymmetry around brows, realistic skin pores'
-  );
-  const wardrobe = filled(
-    profile.wardrobe,
-    'weathered dark jacket, charcoal tee, utilitarian trousers, worn boots'
-  );
-  const personality = filled(
-    profile.personality,
-    'Calm, observant, emotionally contained under pressure.'
-  );
-  const backstory = filled(
-    profile.backstory,
-    'Carries lived urban history; disciplined and self-possessed.'
-  );
-  const aesthetic = filled(profile.aesthetic, 'Urban spiritual realism');
-
-  return `Identity Lock (MANDATORY): ${name}, ${age}y/o ${gender}, ${build}, ${skinTone}, ${eyes} eyes, ${hair}. Distinctive markers: ${distinct}.
-Narrative Cues: ${personality} Backstory signal: ${backstory}.
-Styling DNA: ${aesthetic}. Signature wardrobe: ${wardrobe}.
-Consistency priorities (do not drift): preserve facial-hair geometry, eyewear shape if present, hairline and temple shape, shoulder-to-waist ratio, chest/body hair pattern, and bone landmarks (clavicle/jawline).`;
-}
-
 function buildUndergarmentLine(profile: CharacterProfile): string {
   if (profile.undergarmentType === 'None') {
     return 'Undergarments: None (non-sexual, clinical life drawing reference).';
@@ -88,17 +63,25 @@ async function callGemini(
   seed: number,
   aspectRatio: "1:1" | "3:4" | "4:3" | "9:16" | "16:9" = "16:9",
   referenceImage?: string,
-  awsCredentials?: any
+  awsCredentials?: any,
+  options?: { useInitImage?: boolean; referenceImages?: string[]; provider?: ProviderConfig['provider']; model?: string }
 ): Promise<GenerationResult> {
   try {
+    const provider = options?.provider || activeProviderConfig.provider;
+    const model = options?.model || activeProviderConfig.model;
+    const refs = [referenceImage, ...(options?.referenceImages || [])].filter(
+      (url): url is string => Boolean(url)
+    );
     const response = await fetch('/api/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         prompt, seed, aspectRatio,
-        provider: activeProviderConfig.provider === 'local-llm' ? 'local-sd' : activeProviderConfig.provider,
-        model: activeProviderConfig.model,
-        referenceImage,
+        provider: provider === 'local-llm' ? 'local-sd' : provider,
+        model,
+        referenceImage: refs[0],
+        referenceImages: refs,
+        useInitImage: options?.useInitImage,
         awsCredentials,
       }),
     });
@@ -109,6 +92,10 @@ async function callGemini(
     return data as GenerationResult;
   } catch (error: any) {
     if (error.message === 'AUTH_REQUIRED') throw new Error('AUTH_REQUIRED');
+    if (error.message === 'KEY_LEAKED')
+      throw new Error('Gemini API key was reported as leaked. Replace GEMINI_API_KEY in .env.');
+    if (error.message === 'INSUFFICIENT_BALANCE')
+      throw new Error('Venice has no remaining credits. Top up at venice.ai/settings/api.');
     if (error.message === 'TIMEOUT')
       throw new Error('Generation timed out. Please try again.');
     if (error.message === 'MODEL_UNAVAILABLE')
@@ -116,7 +103,7 @@ async function callGemini(
     if (error.message === 'RATE_LIMITED')
       throw new Error('Rate limit reached. Please wait a minute and try again.');
     if (error.message === 'SAFETY_BLOCK')
-      throw new Error('Blocked by safety filters. Try a different prompt.');
+      throw new Error('The selected provider rejected this image request.');
     if (error.message === 'NO_RESULT' || error.message === 'NO_IMAGE_DATA')
       throw new Error('No image returned. Please try again.');
     throw error;
@@ -125,7 +112,8 @@ async function callGemini(
 
 export function buildCharacterPrompt(
   profile: CharacterProfile,
-  type: ReferenceType
+  type: ReferenceType,
+  options?: { attachFace?: boolean }
 ): string {
   const nudeReferenceTypes: ReferenceType[] = [
     'BODY_NUDE',
@@ -136,31 +124,63 @@ export function buildCharacterPrompt(
   ];
   const isNudeReference = nudeReferenceTypes.includes(type);
   const undergarmentLine = (type === 'BODY_REVERSE' || isNudeReference)
-    ? (isNudeReference ? 'Undergarments: None (non-sexual, clinical life drawing reference).' : buildUndergarmentLine(profile))
+    ? (isNudeReference ? 'Undergarments: None.' : buildUndergarmentLine(profile))
     : '';
-  const identityBlock = buildCharacterIdentityBlock(profile);
-  const anatomyConstraints =
-    'Composition constraints: full body visible head-to-toe, no crop on head/hands/feet, subject occupies ~85% of frame, camera height around sternum. Preserve realistic clavicles, hands, feet, musculature, and skin texture.';
+  const isHeadshot = type === 'HEADSHOT';
+  const identityBlock = buildCharacterIdentityBlock(profile, {
+    hasFaceReference: Boolean(options?.attachFace),
+    shotType: type,
+  });
+  const anatomyConstraints = isNudeReference
+    ? 'Composition constraints: character reference plate, full body visible head-to-toe, no crop on head/hands/feet, subject occupies ~85% of frame, camera height around sternum. Preserve realistic clavicles, hands, feet, musculature, and skin texture.'
+    : type === 'BODY_REVERSE'
+      ? 'Composition constraints: natural proportions, no vertical compression or stretched limbs, full body head-to-toe, standing, camera at mid-torso. Use the selected body-study wardrobe exactly.'
+      : type === 'WARDROBE' || type === 'ACTION' || type === 'NEUTRAL_SHEET'
+        ? 'Composition constraints: natural adult proportions, no vertical compression or stretched limbs, full body head-to-toe in a 3:4 frame.'
+        : '';
+  const detailPriority = isHeadshot
+    ? 'Detail priority: the face is the entire job. If the model wants a cinematic hero shot, still crop at the clavicle.'
+    : 'Detail priority: If multi-view layout reduces fidelity, prioritize a single anatomically accurate full-body render with identity retention.';
+  const negatives = isHeadshot
+    ? HEADSHOT_NEGATIVE_CONSTRAINTS
+    : DEFAULT_CHARACTER_NEGATIVE_CONSTRAINTS;
   return `${AESTHETIC_PROMPT_CORE}
     ${identityBlock}
     Scene: ${CHARACTER_TEMPLATES[type]}
-    ${isNudeReference || type === 'BODY_REVERSE' ? anatomyConstraints : ''}
-    Detail priority: If multi-view layout reduces fidelity, prioritize a single anatomically accurate full-body render with identity retention.
+    ${anatomyConstraints}
+    ${detailPriority}
     ${undergarmentLine}
-    Negative constraints: ${DEFAULT_CHARACTER_NEGATIVE_CONSTRAINTS}.
+    Negative constraints: ${negatives}.
     Style: High-fidelity cinematic photography. Strict facial and anatomical consistency.`.trim();
 }
 
 export async function generateCharacterImage(
   profile: CharacterProfile,
   type: ReferenceType,
-  awsCredentials?: any
+  awsCredentials?: any,
+  providerOverride?: Partial<ProviderConfig>
 ): Promise<GenerationResult> {
-  const prompt = buildCharacterPrompt(profile, type);
-  const isNudeReference = [
-    'BODY_NUDE', 'BODY_NUDE_FRONT', 'BODY_NUDE_THREE_QUARTER', 'BODY_NUDE_PROFILE', 'BODY_NUDE_BACK'
-  ].includes(type);
-  return callGemini(prompt, profile.seed, (type === 'BODY_REVERSE' || isNudeReference) ? "3:4" : "16:9", profile.canonHeadshotUrl, awsCredentials);
+  const faceRef = type === 'HEADSHOT' && !profile.canonHeadshotUrl ? undefined : profile.canonHeadshotUrl;
+  const provider = providerOverride?.provider || activeProviderConfig.provider;
+  const useInit = Boolean(faceRef) && shouldUseInitImage({
+    provider,
+    forgeType: 'CharacterForge',
+    type,
+  });
+  const attachFace = Boolean(faceRef) && (provider === 'gemini' || useInit);
+  const prompt = buildCharacterPrompt(profile, type, { attachFace });
+  return callGemini(
+    prompt,
+    profile.seed,
+    shotAspectRatio(type) as "1:1" | "3:4" | "4:3" | "9:16" | "16:9",
+    attachFace ? faceRef : undefined,
+    awsCredentials,
+    {
+      provider,
+      model: providerOverride?.model,
+      useInitImage: useInit,
+    }
+  );
 }
 
 export async function generateSetImage(
@@ -169,7 +189,14 @@ export async function generateSetImage(
   awsCredentials?: any
 ): Promise<GenerationResult> {
   const prompt = buildSetPrompt(profile, type);
-  return callGemini(prompt, profile.seed, "16:9", undefined, awsCredentials);
+  const setRef = setLockReferenceUrl(profile, type);
+  return callGemini(prompt, profile.seed, "16:9", setRef, awsCredentials, {
+    useInitImage: Boolean(setRef) && shouldUseInitImage({
+      provider: activeProviderConfig.provider,
+      forgeType: 'SetForge',
+      type,
+    }),
+  });
 }
 
 export function buildSetPrompt(
@@ -217,7 +244,16 @@ export async function generateCompositeImage(
   config: CompositeConfig,
   awsCredentials?: any
 ): Promise<GenerationResult> {
-  const identityBlock = buildCharacterIdentityBlock(char);
+  const provider = activeProviderConfig.provider;
+  const useInit = Boolean(char.canonHeadshotUrl) && shouldUseInitImage({
+    provider,
+    forgeType: 'CompositorForge',
+    type: 'CINEMATIC_COMPOSITE',
+  });
+  const attachFace = Boolean(char.canonHeadshotUrl) && (provider === 'gemini' || useInit);
+  const identityBlock = buildCharacterIdentityBlock(char, {
+    hasFaceReference: attachFace,
+  });
   const setName = filled(set.name, 'Unnamed location');
   const setType = filled(set.locationType, 'Urban');
   const setStyle = filled(set.style, 'Urban spiritual realism');
@@ -267,12 +303,19 @@ export async function generateCompositeImage(
     Additional Details/Actors: ${extraActors}.
     Shot Contract (LOCKED): shot_type=${shotType}, camera_angle=${cameraAngle}, lens=${lensPreset}, subject_distance=${subjectDistance}, emotion_tone=${emotionTone}.
     Landmark Lock (LOCKED): ${landmarkLock}
+    ${attachFace ? 'Character face is locked to the attached canon headshot.' : ''}
+    ${set.canonWideUrl || set.canonMediumUrl ? 'Environment is locked to established wide/medium coverage. Match architecture, materials, and lighting.' : ''}
 
     Integration Logic: Place the character physically in the environment. Match local lighting, shadows, and color bounce from the ${setLighting}.
     Atmospheric depth should match the ${setAmbiance}.
 
     Style: ${compositionStyle}.`.trim();
 
-  // Character seed is the identity anchor
-  return callGemini(prompt, char.seed, "16:9", char.canonHeadshotUrl, awsCredentials);
+  const setLock = set.canonWideUrl || set.canonMediumUrl;
+  return callGemini(prompt, char.seed, "16:9", attachFace ? char.canonHeadshotUrl : undefined, awsCredentials, {
+    referenceImages: [attachFace ? char.canonHeadshotUrl : undefined, setLock].filter(
+      (url): url is string => Boolean(url)
+    ),
+    useInitImage: useInit,
+  });
 }

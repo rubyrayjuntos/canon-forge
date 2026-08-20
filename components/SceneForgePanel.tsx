@@ -12,6 +12,7 @@ interface SceneForgePanelProps {
   providerConfig: ProviderConfig;
   seedStills?: SceneSeedStill[];
   onConsumeSeedStills?: () => void;
+  canonReady?: boolean;
 }
 
 const generateId = () => Math.random().toString(36).substring(2, 15);
@@ -24,6 +25,7 @@ const SceneForgePanel: React.FC<SceneForgePanelProps> = ({
   providerConfig,
   seedStills = [],
   onConsumeSeedStills,
+  canonReady = false,
 }) => {
   const allChars = useMemo(
     () => [charProfile, ...savedChars.filter((c) => c.id !== charProfile.id)],
@@ -42,6 +44,7 @@ const SceneForgePanel: React.FC<SceneForgePanelProps> = ({
   const [mode, setMode] = useState<'auto' | 'manual'>('auto');
   const [manualBeats, setManualBeats] = useState<string[]>([]);
   const [isForging, setIsForging] = useState(false);
+  const [gateError, setGateError] = useState('');
 
   const [activeScene, setActiveScene] = useState<KeyframeScene | null>(null);
   const [sceneHistory, setSceneHistory] = useState<KeyframeScene[]>([]);
@@ -155,7 +158,8 @@ const SceneForgePanel: React.FC<SceneForgePanelProps> = ({
           aspectRatio: '16:9',
           provider: providerConfig.provider === 'local-llm' ? 'local-sd' : providerConfig.provider,
           model: providerConfig.model,
-          referenceImage: char.canonHeadshotUrl,
+          referenceImage: providerConfig.provider === 'gemini' ? char.canonHeadshotUrl : undefined,
+          useInitImage: false,
         }),
       });
       const data = await res.json();
@@ -172,6 +176,15 @@ const SceneForgePanel: React.FC<SceneForgePanelProps> = ({
   const handleForge = async () => {
     const char = allChars.find((c) => c.id === selectedCharId) ?? charProfile;
     const set = allSets.find((s) => s.id === selectedSetId) ?? setProfile;
+    if (!char.canonHeadshotUrl) {
+      setGateError('Lock a canon face on the character before forging a scene.');
+      return;
+    }
+    if (!set.name?.trim()) {
+      setGateError('Name the set so landmarks can stay consistent.');
+      return;
+    }
+    setGateError('');
     const clampedInterval = Math.max(1, Math.min(8, intervalSeconds));
     const count = computeFrameCount(totalDuration, clampedInterval);
 
@@ -213,6 +226,11 @@ const SceneForgePanel: React.FC<SceneForgePanelProps> = ({
       {/* Config Bar */}
       <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-6 space-y-4 shadow-xl">
         <p className="text-[10px] text-indigo-400 font-mono tracking-widest uppercase">Scene Configuration</p>
+        {!canonReady && (
+          <p className="text-xs text-amber-300/90 border border-amber-500/20 bg-amber-500/5 rounded-lg px-3 py-2">
+            Scene and video come after a locked composite. Finish person, face, place, coverage, then shot.
+          </p>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-xs text-slate-400 mb-1">Character</label>
@@ -313,6 +331,9 @@ const SceneForgePanel: React.FC<SceneForgePanelProps> = ({
               </div>
             ))}
           </div>
+        )}
+        {gateError && (
+          <p className="text-xs text-amber-400">{gateError}</p>
         )}
         <button
           onClick={handleForge}

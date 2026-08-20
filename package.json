@@ -14,7 +14,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"**/*.{ts,tsx,json,md}\"",
-    "test": "node --test server/xai.test.js server/bedrockModels.test.js utils/providerModels.test.js"
+    "test": "node --test server/xai.test.js server/bedrockModels.test.js server/textGen.test.js utils/providerModels.test.js utils/identityLock.test.js"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock": "^3.1053.0",

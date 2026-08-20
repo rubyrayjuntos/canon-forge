@@ -18,6 +18,7 @@ async function callVideoGenerate(prompt: string): Promise<VideoResult> {
     if (err === 'TIMEOUT') throw new Error('Video generation timed out. Please try again.');
     if (err === 'RATE_LIMITED') throw new Error('Rate limit reached. Please wait and try again.');
     if (err === 'AUTH_REQUIRED') throw new Error('AUTH_REQUIRED');
+    if (err === 'KEY_LEAKED') throw new Error('Gemini API key was reported as leaked. Replace GEMINI_API_KEY in .env.');
     throw new Error('Video generation failed. Please try again.');
   }
   return data as VideoResult;

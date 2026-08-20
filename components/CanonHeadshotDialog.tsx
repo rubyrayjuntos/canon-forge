@@ -2,22 +2,25 @@ import React, { useState, useRef, useEffect } from 'react';
 import { CharacterProfile } from '../types';
 import { ProviderConfig } from '../services/geminiService';
 import { AESTHETIC_PROMPT_CORE } from '../constants';
+import { buildCharacterIdentityBlock, HEADSHOT_SCENE, HEADSHOT_NEGATIVE_CONSTRAINTS } from '../utils/identityLock.js';
 
 interface CanonHeadshotDialogProps {
   isOpen: boolean;
   profile: CharacterProfile;
   providerConfig: ProviderConfig;
   onApprove: (canonUrl: string) => void;
-  onSkip: () => void;
+  onGenerateFromDescription: () => void;
+  onClose: () => void;
 }
 
 type DialogState = 'upload' | 'generating' | 'error' | 'review';
 
 function buildCanonPrompt(profile: CharacterProfile): string {
   return `${AESTHETIC_PROMPT_CORE}
-Subject: Character ${profile.name}, ${profile.age}y/o ${profile.gender}, ${profile.build} build, ${profile.skinTone} skin, ${profile.eyes} eyes, ${profile.hair} hair. ${profile.distinctiveFeatures}.
-Scene: Extreme close-up cinematic headshot, neutral expression, microscopic skin texture and iris detail, neutral studio background, soft key lighting, character focus.
-Style: High-fidelity cinematic photography. Strict facial and anatomical consistency. Maintain the exact facial features and identity from the reference image.`.trim();
+${buildCharacterIdentityBlock(profile, { shotType: 'HEADSHOT' })}
+Scene: ${HEADSHOT_SCENE}
+Negative constraints: ${HEADSHOT_NEGATIVE_CONSTRAINTS}.
+Style: High-fidelity cinematic photography. Strict facial identity. Maintain the exact facial features from the reference image if attached.`.trim();
 }
 
 async function downscaleImage(file: File): Promise<{ b64: string; mimeType: string }> {
@@ -45,7 +48,7 @@ async function downscaleImage(file: File): Promise<{ b64: string; mimeType: stri
 }
 
 const CanonHeadshotDialog: React.FC<CanonHeadshotDialogProps> = ({
-  isOpen, profile, providerConfig, onApprove, onSkip,
+  isOpen, profile, providerConfig, onApprove, onGenerateFromDescription, onClose,
 }) => {
   const [state, setState] = useState<DialogState>('upload');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -125,14 +128,14 @@ const CanonHeadshotDialog: React.FC<CanonHeadshotDialogProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
       <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-lg mx-4 p-6 space-y-4">
         <div className="flex justify-between items-center">
-          <h2 className="text-lg font-bold text-slate-100">Canon Face Setup</h2>
-          <button onClick={onSkip} className="text-slate-500 hover:text-slate-300 text-sm">Skip</button>
+          <h2 className="text-lg font-bold text-slate-100">Lock a canon face</h2>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-sm">Close</button>
         </div>
 
         <p className="text-sm text-slate-400">
           <span className="text-indigo-400 font-semibold">{profile.name || 'Character'}</span>
           {profile.age ? `, ${profile.age}y/o` : ''}{profile.gender ? ` ${profile.gender}` : ''}.
-          Upload a face photo to lock a canon headshot for all generations.
+          The first headshot becomes the identity lock for every later shot.
         </p>
 
         {providerConfig.provider === 'venice' && (
@@ -166,21 +169,25 @@ const CanonHeadshotDialog: React.FC<CanonHeadshotDialogProps> = ({
               onChange={(e) => { if (e.target.files?.[0]) handleFileSelect(e.target.files[0]); }}
             />
             {fileError && <p className="text-sm text-red-400">{fileError}</p>}
-            <div className="flex gap-3">
-              <button
-                onClick={handleGenerate}
-                disabled={!selectedFile}
-                className="flex-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold rounded-lg px-4 py-2 transition-colors"
-              >
-                Generate Canon Headshot
-              </button>
-              <button
-                onClick={onSkip}
-                className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200 border border-slate-700 rounded-lg transition-colors"
-              >
-                Skip
-              </button>
-            </div>
+            <button
+              onClick={onGenerateFromDescription}
+              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-lg px-4 py-2"
+            >
+              Generate from description
+            </button>
+            <button
+              onClick={handleGenerate}
+              disabled={!selectedFile}
+              className="w-full bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg px-4 py-2 text-sm"
+            >
+              {selectedFile ? 'Generate from photo' : 'Or upload a photo first'}
+            </button>
+            <button
+              onClick={onClose}
+              className="w-full text-sm text-slate-500 hover:text-slate-300 py-1"
+            >
+              Cancel
+            </button>
           </div>
         )}
 
@@ -205,10 +212,10 @@ const CanonHeadshotDialog: React.FC<CanonHeadshotDialogProps> = ({
                 Try Again
               </button>
               <button
-                onClick={onSkip}
+                onClick={onClose}
                 className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200 border border-slate-700 rounded-lg transition-colors"
               >
-                Skip
+                Cancel
               </button>
             </div>
           </div>
@@ -231,7 +238,7 @@ const CanonHeadshotDialog: React.FC<CanonHeadshotDialogProps> = ({
                 onClick={() => onApprove(generatedUrl)}
                 className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-lg px-4 py-2 transition-colors"
               >
-                ✓ Approve as Canon Face
+                ✓ Lock as canon face
               </button>
               <button
                 onClick={handleGenerate}
@@ -240,10 +247,10 @@ const CanonHeadshotDialog: React.FC<CanonHeadshotDialogProps> = ({
                 ↻ Retry
               </button>
               <button
-                onClick={onSkip}
+                onClick={onGenerateFromDescription}
                 className="w-full text-sm text-slate-500 hover:text-slate-300 transition-colors py-1"
               >
-                Skip (use without locking)
+                Generate from description instead
               </button>
             </div>
           </div>

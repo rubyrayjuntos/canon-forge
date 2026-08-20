@@ -15,7 +15,7 @@ const Toast: React.FC<ToastProps> = ({ message, type, onClose }) => {
   const icon = type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle';
 
   React.useEffect(() => {
-    const timer = setTimeout(onClose, 3000);
+    const timer = setTimeout(onClose, type === 'error' ? 8000 : 4000);
     return () => clearTimeout(timer);
   }, [onClose]);
 

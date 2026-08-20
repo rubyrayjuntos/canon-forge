@@ -32,7 +32,7 @@ export interface CharacterProfile {
   undergarmentType: string;
   undergarmentFit: string;
   undergarmentStyle: string;
-  canonHeadshotUrl?: string;  // data URL of approved canon headshot; undefined until locked
+  canonHeadshotUrl?: string;  // data URL or hosted URL of approved canon headshot
   wardrobe: string;           // e.g. "weathered black leather jacket, cargo pants"
 }
 
@@ -49,6 +49,8 @@ export interface SetProfile {
   fixedLandmarks: string;
   forbiddenChanges: string;
   lightingRigLock: string;
+  canonWideUrl?: string;
+  canonMediumUrl?: string;
 }
 
 export interface CompositeConfig {
@@ -83,6 +85,7 @@ export interface ReferenceImage {
   timestamp: number;
   status?: 'pending' | 'done' | 'error';
   error?: string;
+  verdict?: 'approved' | 'rejected';
   compositorSpec?: CompositorShotSpec;
 }
 

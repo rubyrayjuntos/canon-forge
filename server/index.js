@@ -1,21 +1,26 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { BedrockClient, ListFoundationModelsCommand } from '@aws-sdk/client-bedrock';
 import {
   buildXaiImageBody,
   normalizeXaiImageUrl,
+  XAI_API_BASE,
   xaiImageGenerationModelsUrl,
   xaiImagesEditsUrl,
   xaiImagesGenerationsUrl,
 } from './xai.js';
 import { isSupportedBedrockImageModel } from './bedrockModels.js';
+import {
+  extractChatText,
+  resolveTextModel,
+  resolveTextProvider,
+} from './textGen.js';
+import { applyEnv, watchEnv } from './env.js';
 
-dotenv.config({ path: '.env.local' });
-dotenv.config();
+applyEnv();
 
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
@@ -54,12 +59,16 @@ const AWS_IMAGE_MODELS = (process.env.AWS_BEDROCK_IMAGE_MODEL_IDS || 'amazon.tit
   .split(',')
   .map((m) => m.trim())
   .filter(Boolean);
-const XAI_API_KEY = process.env.XAI_API_KEY;
 const XAI_IMAGE_MODEL = process.env.XAI_IMAGE_MODEL || 'grok-imagine-image';
 const XAI_IMAGE_MODELS = (process.env.XAI_IMAGE_MODELS || XAI_IMAGE_MODEL)
   .split(',')
   .map((m) => m.trim())
   .filter(Boolean);
+let XAI_API_KEY = process.env.XAI_API_KEY;
+const XAI_TEXT_MODEL = process.env.XAI_TEXT_MODEL || 'grok-3';
+const GEMINI_TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || 'gemini-2.5-flash';
+const VENICE_TEXT_MODEL = process.env.VENICE_TEXT_MODEL || 'llama-3.3-70b';
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3';
 
 let bedrockRuntimeClient;
 function getBedrockRuntimeClient(credentials) {
@@ -181,6 +190,30 @@ function getLocalSdDimensions(aspectRatio) {
   };
 }
 
+async function referenceToBase64(referenceImage) {
+  if (!referenceImage || typeof referenceImage !== 'string') return '';
+  const dataMatch = referenceImage.match(/^data:[^;]+;base64,(.+)$/);
+  if (dataMatch) return dataMatch[1];
+  if (referenceImage.startsWith('http://') || referenceImage.startsWith('https://')) {
+    const imgRes = await fetch(referenceImage);
+    if (!imgRes.ok) return '';
+    const buf = Buffer.from(await imgRes.arrayBuffer());
+    return buf.toString('base64');
+  }
+  return referenceImage;
+}
+
+function uniqueReferenceImages(referenceImage, referenceImages) {
+  const list = [];
+  if (typeof referenceImage === 'string' && referenceImage) list.push(referenceImage);
+  if (Array.isArray(referenceImages)) {
+    for (const item of referenceImages) {
+      if (typeof item === 'string' && item) list.push(item);
+    }
+  }
+  return [...new Set(list)];
+}
+
 app.use(express.json({ limit: '20mb' }));
 
 const GEMINI_IMAGE_MODELS = [
@@ -291,53 +324,158 @@ app.get('/api/local-sd-status', async (req, res) => {
   }
 });
 
+async function pingUrl(url, timeoutMs = 2000) {
+  try {
+    const response = await Promise.race([
+      fetch(url),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), timeoutMs)),
+    ]);
+    return Boolean(response.ok);
+  } catch {
+    return false;
+  }
+}
+
+app.get('/api/health', async (_req, res) => {
+  const [ollama, localSd] = await Promise.all([
+    pingUrl(`${OLLAMA_URL}/api/tags`),
+    pingUrl(`${process.env.LOCAL_SD_URL || 'http://localhost:7860'}/sdapi/v1/sd-models`),
+  ]);
+  return res.json({
+    envLoadedAt: process.env.CANON_ENV_LOADED_AT || null,
+    providers: {
+      xai: { configured: Boolean(XAI_API_KEY), note: 'Imagine for images, Grok for text' },
+      venice: { configured: Boolean(process.env.VENICE_API_KEY) },
+      gemini: { configured: Boolean(process.env.GEMINI_API_KEY), note: 'Also used for video' },
+      aws: { configured: Boolean(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) },
+      'local-llm': { configured: true, available: ollama },
+      'local-sd': { available: localSd },
+    },
+  });
+});
+
 app.post('/api/generate-text', async (req, res) => {
-  const { prompt, model = 'llama3' } = req.body ?? {};
-  console.log(`[text-gen] prompt received, len=${prompt?.length}`);
+  const { prompt, provider = 'local-llm', model } = req.body ?? {};
+  console.log(`[text-gen] prompt received, len=${prompt?.length} provider=${provider}`);
   if (!prompt) return res.status(400).json({ error: 'INVALID_PROMPT' });
 
-  try {
-    const response = await fetch(`${OLLAMA_URL}/api/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        prompt,
-        stream: false,
-      }),
-    });
+  const textProvider = resolveTextProvider(provider, {
+    hasXai: Boolean(XAI_API_KEY),
+    hasGemini: Boolean(process.env.GEMINI_API_KEY),
+  });
+  const textModel = resolveTextModel(textProvider, model, {
+    xai: XAI_TEXT_MODEL,
+    gemini: GEMINI_TEXT_MODEL,
+    venice: VENICE_TEXT_MODEL,
+    ollama: OLLAMA_MODEL,
+  });
 
-    if (!response.ok) throw new Error('OLLAMA_ERROR');
-    const data = await response.json();
-    return res.json({ text: data.response });
+  try {
+    let text = '';
+
+    if (textProvider === 'xai') {
+      if (!XAI_API_KEY) return res.status(401).json({ error: 'AUTH_REQUIRED' });
+      const xaiRes = await fetch(`${XAI_API_BASE}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${XAI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: textModel,
+          temperature: 1.1,
+          messages: [
+            { role: 'system', content: 'Return only a valid JSON object. No markdown, no commentary.' },
+            { role: 'user', content: prompt },
+          ],
+        }),
+      });
+      const xaiData = await xaiRes.json();
+      if (!xaiRes.ok) {
+        console.error('[text-gen] xai error:', JSON.stringify(xaiData).slice(0, 400));
+        return res.status(502).json({ error: 'LLM_UNAVAILABLE' });
+      }
+      text = extractChatText(xaiData);
+    } else if (textProvider === 'gemini') {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) return res.status(401).json({ error: 'AUTH_REQUIRED' });
+      const ai = new GoogleGenAI({ apiKey });
+      const response = await ai.models.generateContent({
+        model: textModel,
+        contents: prompt,
+      });
+      text = response.text || '';
+    } else if (textProvider === 'venice') {
+      const veniceKey = process.env.VENICE_API_KEY;
+      if (!veniceKey) return res.status(401).json({ error: 'AUTH_REQUIRED' });
+      const veniceRes = await fetch(`${VENICE_API_BASE}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${veniceKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: textModel,
+          temperature: 1.1,
+          messages: [
+            { role: 'system', content: 'Return only a valid JSON object. No markdown, no commentary.' },
+            { role: 'user', content: prompt },
+          ],
+        }),
+      });
+      const veniceData = await veniceRes.json();
+      if (!veniceRes.ok) {
+        console.error('[text-gen] venice error:', JSON.stringify(veniceData).slice(0, 400));
+        return res.status(502).json({ error: 'LLM_UNAVAILABLE' });
+      }
+      text = extractChatText(veniceData);
+    } else {
+      const response = await fetch(`${OLLAMA_URL}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: textModel,
+          prompt,
+          stream: false,
+        }),
+      });
+      if (!response.ok) throw new Error('OLLAMA_ERROR');
+      const data = await response.json();
+      text = data.response || '';
+    }
+
+    if (!text) return res.status(502).json({ error: 'NO_RESULT' });
+    return res.json({ text });
   } catch (error) {
-    console.error('[ollama] error:', error);
+    console.error('[text-gen] error:', error);
     return res.status(502).json({ error: 'LLM_UNAVAILABLE' });
   }
 });
 
 app.post('/api/generate', async (req, res) => {
-  const { prompt, seed, aspectRatio, fastRender, provider = 'gemini', model, referenceImage, awsCredentials } = req.body ?? {};
+  const { prompt, seed, aspectRatio, fastRender, provider = 'gemini', model, referenceImage, referenceImages, useInitImage, awsCredentials } = req.body ?? {};
   if (!prompt || typeof prompt !== 'string') {
     return res.status(400).json({ error: 'INVALID_PROMPT' });
   }
 
   const ratio = ALLOWED_ASPECT_RATIOS.has(aspectRatio) ? aspectRatio : '16:9';
   const safeSeed = Math.abs(Math.floor(Number(seed ?? 0))) % (MAX_INT32 + 1);
+  const refs = uniqueReferenceImages(referenceImage, referenceImages);
+  const primaryRef = refs[0];
   const startedAt = Date.now();
-  console.log(`[generate] start provider=${provider} model=${model || 'default'} ratio=${ratio} seed=${safeSeed}`);
+  console.log(`[generate] start provider=${provider} model=${model || 'default'} ratio=${ratio} seed=${safeSeed} refs=${refs.length} init=${Boolean(useInitImage && primaryRef)}`);
 
   try {
     // --- xAI Grok Imagine ---
     if (provider === 'xai') {
       if (!XAI_API_KEY) return res.status(401).json({ error: 'AUTH_REQUIRED' });
 
-      const isEdit = Boolean(referenceImage);
+      const isEdit = Boolean(primaryRef) && useInitImage;
       const xaiBody = buildXaiImageBody({
         model: model || XAI_IMAGE_MODEL,
         prompt,
         aspectRatio: ratio,
-        referenceImage,
+        referenceImage: isEdit ? primaryRef : undefined,
       });
 
       const xaiRes = await Promise.race([
@@ -354,7 +492,12 @@ app.post('/api/generate', async (req, res) => {
 
       const xaiData = await xaiRes.json();
       if (!xaiRes.ok) {
-        console.error('[xai] API error:', xaiData?.error?.message || xaiData?.message || `XAI_ERROR_${xaiRes.status}`, JSON.stringify(xaiData).slice(0, 500));
+        const code = xaiData?.code || xaiData?.error?.code || '';
+        const errorMessage = xaiData?.error?.message || xaiData?.error || xaiData?.message || `XAI_ERROR_${xaiRes.status}`;
+        console.error('[xai] API error:', errorMessage, JSON.stringify(xaiData).slice(0, 500));
+        if (String(code).includes('content-moderated') || String(errorMessage).includes('content moderation')) {
+          return res.status(400).json({ error: 'SAFETY_BLOCK' });
+        }
         if (xaiRes.status === 401 || xaiRes.status === 403) return res.status(401).json({ error: 'AUTH_REQUIRED' });
         if (xaiRes.status === 429) return res.status(429).json({ error: 'RATE_LIMITED' });
         if (xaiRes.status === 503) return res.status(503).json({ error: 'MODEL_UNAVAILABLE' });
@@ -370,29 +513,41 @@ app.post('/api/generate', async (req, res) => {
     if (provider === 'local-sd') {
       const localSdUrl = process.env.LOCAL_SD_URL || 'http://localhost:7860';
       const { width, height } = getLocalSdDimensions(ratio);
-      console.log(`[local-sd] fetching ${localSdUrl}/sdapi/v1/txt2img`);
+      const useImg2Img = Boolean(useInitImage && primaryRef);
+      const endpoint = useImg2Img ? 'img2img' : 'txt2img';
+      console.log(`[local-sd] fetching ${localSdUrl}/sdapi/v1/${endpoint}`);
 
       const localPrompt = `${prompt}, high-fidelity, photorealistic, raw photo, 8k uhd, highly detailed skin, realistic eyes`;
+      const payload = {
+        prompt: localPrompt,
+        negative_prompt:
+          'deformed, disfigured, bad anatomy, extra limbs, missing limbs, duplicate body, duplicate person, triptych, diptych, contact sheet, split screen, collage, watermark, text, blurry, low quality, grainy, lowres, monochrome, signature, cut off, out of frame, bad proportions, gross proportions, cloned face, mutation',
+        steps: LOCAL_SD_STEPS,
+        width,
+        height,
+        seed: safeSeed,
+        cfg_scale: LOCAL_SD_CFG_SCALE,
+        sampler_name: LOCAL_SD_SAMPLER,
+      };
+      if (useImg2Img) {
+        const initB64 = await referenceToBase64(primaryRef);
+        if (initB64) {
+          payload.init_images = [initB64];
+          payload.denoising_strength = 0.45;
+        }
+      } else {
+        payload.enable_hr = true;
+        payload.denoising_strength = 0.55;
+        payload.hr_scale = 1.5;
+        payload.hr_upscaler = 'Latent';
+        payload.hr_second_pass_steps = 15;
+      }
+
       const sdRes = await Promise.race([
-        fetch(`${localSdUrl}/sdapi/v1/txt2img`, {
+        fetch(`${localSdUrl}/sdapi/v1/${useImg2Img && payload.init_images ? 'img2img' : 'txt2img'}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            prompt: localPrompt,
-            negative_prompt:
-              'deformed, disfigured, bad anatomy, extra limbs, missing limbs, duplicate body, duplicate person, triptych, diptych, contact sheet, split screen, collage, watermark, text, blurry, low quality, grainy, lowres, monochrome, signature, cut off, out of frame, bad proportions, gross proportions, cloned face, mutation',
-            steps: LOCAL_SD_STEPS,
-            width,
-            height,
-            seed: safeSeed,
-            cfg_scale: LOCAL_SD_CFG_SCALE,
-            sampler_name: LOCAL_SD_SAMPLER,
-            enable_hr: true,
-            denoising_strength: 0.55,
-            hr_scale: 1.5,
-            hr_upscaler: 'Latent',
-            hr_second_pass_steps: 15,
-          }),
+          body: JSON.stringify(payload),
         }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), REQUEST_TIMEOUT_MS)),
       ]);
@@ -438,6 +593,9 @@ app.post('/api/generate', async (req, res) => {
       const veniceData = await veniceRes.json();
       if (!veniceRes.ok) {
         console.error('[venice] API error:', JSON.stringify(veniceData));
+        if (veniceRes.status === 401 || veniceRes.status === 403) return res.status(401).json({ error: 'AUTH_REQUIRED' });
+        if (veniceRes.status === 402) return res.status(402).json({ error: 'INSUFFICIENT_BALANCE' });
+        if (veniceRes.status === 429) return res.status(429).json({ error: 'RATE_LIMITED' });
         return res.status(502).json({ error: 'NO_IMAGE_DATA' });
       }
       // Venice returns OpenAI-compatible format: data[0].b64_json
@@ -473,9 +631,16 @@ app.post('/api/generate', async (req, res) => {
     const imageSize = fastRender ? '512' : '1K';
     const ai = new GoogleGenAI({ apiKey });
     const parts = [];
-    if (referenceImage) {
-      const match = referenceImage.match(/^data:([^;]+);base64,(.+)$/);
-      if (match) parts.push({ inlineData: { mimeType: match[1], data: match[2] } });
+    for (const ref of refs) {
+      const match = String(ref).match(/^data:([^;]+);base64,(.+)$/);
+      if (match) {
+        parts.push({ inlineData: { mimeType: match[1], data: match[2] } });
+        continue;
+      }
+      if (String(ref).startsWith('http')) {
+        const b64 = await referenceToBase64(ref);
+        if (b64) parts.push({ inlineData: { mimeType: 'image/jpeg', data: b64 } });
+      }
     }
     parts.push({ text: prompt });
     const generate = (size) =>
@@ -603,6 +768,7 @@ app.post('/api/generate-video', async (req, res) => {
     const message = error instanceof Error ? error.message : 'VIDEO_FAILED';
     const elapsed = Date.now() - startedAt;
     console.error(`[video] failed after ${elapsed}ms: ${message}`);
+    if (message.includes('leaked')) return res.status(401).json({ error: 'KEY_LEAKED' });
     if (message === 'TIMEOUT') return res.status(504).json({ error: 'TIMEOUT' });
     if (message.includes('"code":429') || message.includes('RESOURCE_EXHAUSTED')) {
       return res.status(429).json({ error: 'RATE_LIMITED' });
@@ -623,5 +789,11 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 app.listen(PORT, () => {
+  process.env.CANON_ENV_LOADED_AT = new Date().toISOString();
+  watchEnv((file) => {
+    XAI_API_KEY = process.env.XAI_API_KEY;
+    process.env.CANON_ENV_LOADED_AT = new Date().toISOString();
+    console.log(`[env] reloaded ${file}`);
+  });
   console.log(`Server listening on http://localhost:${PORT}`);
 });

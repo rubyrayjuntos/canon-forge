@@ -1,4 +1,5 @@
 import { ReferenceType, SetReferenceType } from './types';
+import { HEADSHOT_SCENE } from './utils/identityLock.js';
 
 // Set to true for faster testing with simpler prompts
 const TEST_MODE = false;
@@ -35,21 +36,21 @@ export const CHARACTER_TEMPLATES: Record<ReferenceType, string> = TEST_MODE
     }
   : {
       HEADSHOT:
-        'Extreme close-up cinematic headshot, neutral expression, microscopic skin texture and iris detail, neutral studio background, soft key lighting, character focus.',
+        HEADSHOT_SCENE,
       BODY_NUDE:
-        'Full body figure reference. Front view and 3/4 profile view side-by-side. The character is standing naturally, unclothed, in a neutral studio. Accurate human proportions, musculature, and skin detail. Studio lighting — soft key light, fill shadow, specular highlights on skin. Clean background. Character design reference sheet.',
+        'Full body figure reference. Front view and 3/4 profile view side-by-side. The character is standing naturally, unclothed, in a neutral studio. Accurate human proportions, musculature, and skin detail. Studio lighting: soft key light, fill shadow, specular highlights on skin. Clean background. Character design reference sheet.',
       BODY_NUDE_FRONT:
-        'Full body nude figure reference, front view only. Character stands naturally with arms relaxed. Neutral studio environment. Accurate anatomy, realistic skin texture, and clean silhouette from head to toe. Soft key plus controlled fill and subtle skin specular highlights. Output format constraint: single image, single subject, single camera view only. Do not create diptych/triptych, split panels, contact sheets, or side-by-side comparisons. No duplicate subject instances in one frame.',
+        'Character figure reference sheet. Full body front view only, standing naturally, unclothed, neutral studio lighting. Accurate human proportions, musculature, and skin detail. Neutral studio background. Single subject, single camera view.',
       BODY_NUDE_THREE_QUARTER:
-        'Full body nude figure reference, three-quarter angle only (about 45 degrees). Character stands naturally, preserving torso twist and hip alignment. Neutral studio background, realistic proportions, muscular and skeletal readability, clean head-to-toe framing. Output format constraint: single image, single subject, single camera view only. Do not create diptych/triptych, split panels, contact sheets, or side-by-side comparisons. No duplicate subject instances in one frame.',
+        'Character figure reference sheet. Full body three-quarter angle only (about 45 degrees), standing naturally, unclothed. Preserve torso twist and hip alignment. Neutral studio background. Single subject, single camera view.',
       BODY_NUDE_PROFILE:
-        'Full body nude figure reference, strict side profile only. Character stands naturally with neutral posture. Emphasize side silhouette accuracy: cranial angle, neck line, chest depth, abdominal contour, glute projection, knee alignment, and ankle/foot profile. Output format constraint: single image, single subject, single camera view only. Do not create diptych/triptych, split panels, contact sheets, or side-by-side comparisons. No duplicate subject instances in one frame.',
+        'Character figure reference sheet. Full body strict side profile only, standing naturally, unclothed. Emphasize side silhouette accuracy: cranial angle, neck line, chest depth, abdominal contour, glute projection, knee alignment, and ankle/foot profile. Single subject, single camera view.',
       BODY_NUDE_BACK:
-        'Full body nude figure reference, back view only. Character stands naturally with relaxed arms. Emphasize posterior anatomy and silhouette: trapezius, lat spread, spinal line, glute contour, hamstrings, calf structure, and heel/foot alignment. Neutral studio background, clinical fidelity. Output format constraint: single image, single subject, single camera view only. Do not create diptych/triptych, split panels, contact sheets, or side-by-side comparisons. No duplicate subject instances in one frame.',
+        'Character figure reference sheet. Full body back view only, standing naturally, unclothed. Emphasize posterior anatomy: trapezius, lat spread, spinal line, glute contour, hamstrings, calf structure, and heel/foot alignment. Single subject, single camera view.',
       BODY_REVERSE:
-        'Full body anatomical character reference sheet showing 3 distinct poses side-by-side: Front view, 3/4 profile view, and strict Profile view. The character is wearing character-appropriate minimal athletic briefs to clearly define musculature, skeletal structure, and defining physical traits. Clinical but cinematic lighting, clean simple studio background, high-detail skin rendering.',
+        'Full body character anatomy reference sheet. Front, three-quarter, profile, and back views as a clean turnaround. Character stands naturally in selected body-study wardrobe. Neutral studio background, even lighting, accurate proportions, head-to-toe framing, arms relaxed.',
       WARDROBE:
-        'Full body reference in iconic character wardrobe, urban spiritual style clothing, visible fabric textures (cotton, canvas), standing in a softly lit nocturnal street under overpass.',
+        'Full body reference in iconic character wardrobe, urban spiritual style clothing, visible fabric textures (cotton, canvas), standing in a softly lit nocturnal street under overpass. Natural human proportions: do not compress, squash, or stretch the figure. Head-to-toe in a 3:4 frame.',
       ACTION:
         'Action pose reference, character in mid-motion, cinematic dynamic energy, fluid handheld camera perspective, interacting with urban environment.',
       EXPRESSION:
