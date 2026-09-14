@@ -9,6 +9,7 @@ import { AESTHETIC_PROMPT_CORE, CHARACTER_TEMPLATES, SET_TEMPLATES } from '../co
 
 const POLLINATIONS_BASE_URL = 'https://image.pollinations.ai/prompt';
 const USE_LOCAL_SD = import.meta.env.VITE_USE_LOCAL_SD === 'true';
+const LOCAL_SD_LORA = import.meta.env.VITE_LOCAL_SD_LORA || '';
 
 interface GenerationResult {
   url: string;
@@ -58,7 +59,10 @@ async function callPollinations(
   seed: number,
   aspectRatio: '1:1' | '3:4' | '4:3' | '9:16' | '16:9' = '16:9'
 ): Promise<GenerationResult> {
-  if (USE_LOCAL_SD) return callLocalSdProxy(prompt, seed, aspectRatio);
+  if (USE_LOCAL_SD) {
+    const loraTag = LOCAL_SD_LORA ? `<lora:${LOCAL_SD_LORA}:0.7>, intact_anatomy, ` : '';
+    return callLocalSdProxy(loraTag + prompt, seed, aspectRatio);
+  }
 
   const { width, height } = getImageDimensions(aspectRatio);
   const safeSeed = Math.abs(Math.floor(seed));
